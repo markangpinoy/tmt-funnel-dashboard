@@ -1,746 +1,825 @@
-const SHEET_CSV_URL =
-  "https://docs.google.com/spreadsheets/d/e/2PACX-1vQodpSGaQTvWB7i7sUMZ-5lS17ILsch4R4OxKofe22s8gKNXt_BCvHiQ6Ddvg0LD14F1KgWlmkh0kri/pub?output=csv";
+/* ===============================
+   CONFIG
+================================ */
+const CSV_URL = https://docs.google.com/spreadsheets/d/1lfnCFap50QQ1L3hRB-b9I3kUokHrOIB6kcu7VIx2jx0/edit?usp=sharing; // <-- replace with your link
 
-const app = {
-  rawData: [],
-  filteredData: [],
-  aggregates: {},
-  chartInstance: null,
-  chartInstanceMobile: null,
-  chartMode: "daily",
-  currentChartMetric: "ctr",
-  rowLimit: 10,
+/* ===============================
+   GLOBAL STATE
+================================ */
+let rawRows = [];
+let filteredRows = [];
+let trendChart = null;
+let trendChartMobile = null;
 
-  currencyFormatter: new Intl.NumberFormat("en-PH", {
-    style: "currency",
-    currency: "PHP",
-    maximumFractionDigits: 0,
-  }),
-  percentFormatter: new Intl.NumberFormat("en-US", {
-    style: "percent",
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 2,
-  }),
-  numberFormatter: new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }),
+let currentMetric = "ctr";
+let currentGranularity = "day";
 
-  // Column matching (Google Sheet headers may vary)
-  keyMap: {
-    date: ["date", "day"],
-    channel: ["channel", "source", "platform"],
-    spend: ["ad spend", "spend", "cost", "amount spent"],
-    impressions: ["impressions", "views"],
-    clicks: ["clicks", "link clicks"],
-    leads: ["leads"],
-    booked: ["leads booked", "booked calls", "booked"],
-    showUps: ["show-ups", "show ups", "attended"],
-    qualifiedCalls: ["qualified calls", "sales calls (qualified)", "sales calls qualified"],
-    dealsClosed: ["deals closed", "deal closed", "closed deals"],
-    revenue: ["revenue (booked)", "revenue booked", "revenue"],
-    cashIn: ["cash-in (collected)", "cash-in", "cash in", "collected", "cash collected"],
-  },
+/* ===============================
+   HELPERS
+================================ */
+const peso = (n) => {
+  const val = Number(n || 0);
+  return "₱" + val.toLocaleString("en-PH", { maximumFractionDigits: 0 });
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-  // Default dates = month start to today
-  const today = new Date();
-  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+const num = (n) => {
+  const val = Number(n || 0);
+  return isFinite(val) ? val : 0;
+};
 
-  const setDates = (startId, endId) => {
-    const s = document.getElementById(startId);
-    const e = document.getElementById(endId);
-    if (s && e) {
-      s.valueAsDate = firstDay;
-      e.valueAsDate = today;
-      s.addEventListener("change", app.updateDashboard);
-      e.addEventListener("change", app.updateDashboard);
-    }
-  };
-  setDates("startDate", "endDate");
-  setDates("startDateMobile", "endDateMobile");
+const pct = (n) => {
+  const val = Number(n || 0);
+  return (val * 100).toFixed(1) + "%";
+};
 
-  // Sync buttons
-  const btnSync = document.getElementById("btnSync");
-  if (btnSync) btnSync.addEventListener("click", app.fetchData);
+const safeDiv = (a, b) => (b ? a / b : 0);
 
-  const btnSyncMobile = document.getElementById("btnSyncMobile");
-  if (btnSyncMobile) btnSyncMobile.addEventListener("click", app.fetchData);
+const parseDate = (s) => {
+  // Accepts: "January 1, 2026" OR "1/1/2026" OR ISO
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
 
-  // Filters
-  const channelFilter = document.getElementById("channelFilter");
-  if (channelFilter) channelFilter.addEventListener("change", app.updateDashboard);
+const fmtShortDate = (d) => {
+  if (!d) return "";
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
 
-  // Search + row limit
-  const tableSearch = document.getElementById("tableSearch");
-  if (tableSearch) {
-    tableSearch.addEventListener("keyup", (e) => app.filterTable(e.target.value));
+const normalizeHeader = (h) =>
+  String(h || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+/* ===============================
+   COLUMN MAPPING (EXACT)
+   Based on your sheet:
+   L = Qualified Calls
+   M = Deals Closed
+   N = Revenue (Booked)
+   O = Cash-In (Collected)
+================================ */
+const COLS = {
+  date: ["date"],
+  channel: ["channel"],
+  campaign: ["campaign"],
+  spend: ["ad spend", "spend"],
+  impressions: ["impressions"],
+  clicks: ["clicks"],
+  leads: ["leads", "lead"],
+  booked: ["leads booked", "booked", "booked calls"],
+  showups: ["show-ups", "show ups", "showup", "show up"],
+  qualifiedCalls: ["qualified calls"],         // <-- Column L
+  dealsClosed: ["deals closed", "deals"],      // <-- Column M
+  revenue: ["revenue (booked)", "revenue booked", "revenue"], // <-- Column N
+  cash: ["cash-in (collected)", "cash in (collected)", "cash collected", "cash-in", "cash"] // <-- Column O
+};
+
+function findColIndex(headers, aliases) {
+  const norm = headers.map(normalizeHeader);
+  for (const a of aliases) {
+    const idx = norm.indexOf(normalizeHeader(a));
+    if (idx !== -1) return idx;
   }
+  return -1;
+}
 
-  const rowLimitEl = document.getElementById("rowLimit");
-  if (rowLimitEl) {
-    rowLimitEl.addEventListener("change", (e) => {
-      app.rowLimit = parseInt(e.target.value, 10) || 10;
-      app.renderTable();
-    });
-  }
+function buildRowObj(headers, row) {
+  const h = headers;
 
-  // Chart metric buttons (desktop + mobile share same class)
-  document.querySelectorAll(".chart-btn").forEach((btn) => {
-    btn.addEventListener("click", () => app.updateChartMetric(btn.dataset.metric));
-  });
-
-  // Day/Wk toggles
-  const bindModeButtons = (dailyId, weeklyId) => {
-    const d = document.getElementById(dailyId);
-    const w = document.getElementById(weeklyId);
-    if (d) d.addEventListener("click", () => app.setChartMode("daily"));
-    if (w) w.addEventListener("click", () => app.setChartMode("weekly"));
-  };
-  bindModeButtons("btnDaily", "btnWeekly");
-  bindModeButtons("btnDailyMobile", "btnWeeklyMobile");
-
-  // Mobile tabs
-  app.initTabs();
-
-  // Initial
-  app.fetchData();
-});
-
-app.initTabs = () => {
-  const tabButtons = document.querySelectorAll(".tab-btn");
-  const panels = document.querySelectorAll(".tab-panel");
-
-  const activate = (id) => {
-    panels.forEach((p) => p.classList.remove("active"));
-    tabButtons.forEach((b) => b.classList.remove("tab-active"));
-
-    const panel = document.getElementById(id);
-    if (panel) panel.classList.add("active");
-
-    tabButtons.forEach((b) => {
-      if (b.dataset.tab === id) b.classList.add("tab-active");
-    });
-
-    // When switching to trends on mobile, redraw chart to fit canvas
-    if (id === "tab-trends") {
-      setTimeout(() => app.renderCharts(), 50);
-    }
+  const idx = {
+    date: findColIndex(h, COLS.date),
+    channel: findColIndex(h, COLS.channel),
+    campaign: findColIndex(h, COLS.campaign),
+    spend: findColIndex(h, COLS.spend),
+    impressions: findColIndex(h, COLS.impressions),
+    clicks: findColIndex(h, COLS.clicks),
+    leads: findColIndex(h, COLS.leads),
+    booked: findColIndex(h, COLS.booked),
+    showups: findColIndex(h, COLS.showups),
+    qualifiedCalls: findColIndex(h, COLS.qualifiedCalls),
+    dealsClosed: findColIndex(h, COLS.dealsClosed),
+    revenue: findColIndex(h, COLS.revenue),
+    cash: findColIndex(h, COLS.cash)
   };
 
-  tabButtons.forEach((btn) => btn.addEventListener("click", () => activate(btn.dataset.tab)));
+  const get = (i) => (i >= 0 ? row[i] : "");
 
-  // Default mobile tab
-  activate("tab-kpis");
-};
+  const d = parseDate(get(idx.date));
+  if (!d) return null;
 
-app.fetchData = () => {
-  const lastUpdated = document.getElementById("lastUpdated");
-  if (lastUpdated) lastUpdated.textContent = "Syncing...";
+  return {
+    date: d,
+    dateRaw: get(idx.date),
+    channel: String(get(idx.channel) || "").trim() || "Unknown",
+    campaign: String(get(idx.campaign) || "").trim() || "",
+    spend: num(get(idx.spend)),
+    impressions: num(get(idx.impressions)),
+    clicks: num(get(idx.clicks)),
+    leads: num(get(idx.leads)),
+    booked: num(get(idx.booked)),
+    showups: num(get(idx.showups)),
+    qualifiedCalls: num(get(idx.qualifiedCalls)),   // ✅ Column L
+    dealsClosed: num(get(idx.dealsClosed)),         // ✅ Column M
+    revenue: num(get(idx.revenue)),                 // ✅ Column N
+    cash: num(get(idx.cash))                        // ✅ Column O
+  };
+}
 
-  Papa.parse(SHEET_CSV_URL, {
-    download: true,
-    header: true,
-    skipEmptyLines: true,
-    complete: (results) => {
-      if (results.errors.length && !results.data.length) {
-        app.showError("Failed to load CSV data.");
-        return;
-      }
-      app.processData(results.data, results.meta.fields || []);
-      if (lastUpdated) lastUpdated.textContent = "Live: " + new Date().toLocaleTimeString();
-    },
-    error: (err) => app.showError("Network Error: " + err.message),
-  });
-};
-
-app.showError = (msg) => {
+/* ===============================
+   FETCH + PARSE
+================================ */
+function showError(msg) {
   const el = document.getElementById("errorContainer");
-  if (!el) return;
   el.textContent = msg;
   el.classList.remove("hidden");
-};
+}
 
-app.processData = (data, headers) => {
-  const columnMap = {};
-  const cleanHeaders = headers.map((h) => (h || "").toLowerCase().trim());
+function clearError() {
+  document.getElementById("errorContainer").classList.add("hidden");
+}
 
-  for (const [key, variants] of Object.entries(app.keyMap)) {
-    const matchIndex = cleanHeaders.findIndex((h) => variants.some((v) => h.includes(v)));
-    if (matchIndex !== -1) columnMap[key] = headers[matchIndex];
-  }
+function setLastUpdated() {
+  const el = document.getElementById("lastUpdated");
+  const now = new Date();
+  el.textContent = `Live: ${now.toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+}
 
-  const safeFloat = (val) => {
-    if (val == null) return 0;
-    if (typeof val === "number") return val;
-    const cleaned = String(val).replace(/[₱$,%]/g, "").trim();
-    if (cleaned === "—" || cleaned === "-" || cleaned === "") return 0;
-    const n = parseFloat(cleaned);
-    return Number.isFinite(n) ? n : 0;
-  };
+async function loadCSV() {
+  clearError();
 
-  app.rawData = data
-    .map((row) => {
-      const dateStr = row[columnMap.date];
-      const parsedDate = new Date(dateStr);
+  return new Promise((resolve) => {
+    Papa.parse(CSV_URL, {
+      download: true,
+      header: false,
+      skipEmptyLines: true,
+      complete: (results) => {
+        try {
+          const data = results.data || [];
+          if (data.length < 2) throw new Error("CSV returned no rows.");
 
-      return {
-        date: !isNaN(parsedDate) ? parsedDate : null,
-        channel: row[columnMap.channel] || "Unknown",
-        spend: safeFloat(row[columnMap.spend]),
-        impressions: safeFloat(row[columnMap.impressions]),
-        clicks: safeFloat(row[columnMap.clicks]),
-        leads: safeFloat(row[columnMap.leads]),
-        booked: safeFloat(row[columnMap.booked]),
-        showUps: safeFloat(row[columnMap.showUps]),
-        qualifiedCalls: safeFloat(row[columnMap.qualifiedCalls]),
-        dealsClosed: safeFloat(row[columnMap.dealsClosed]),
-        revenue: safeFloat(row[columnMap.revenue]),
-        cashIn: safeFloat(row[columnMap.cashIn]),
-        original: row,
-      };
-    })
-    .filter((r) => r.date);
+          const headers = data[0];
+          const rows = data.slice(1);
 
-  // Channels dropdown
-  const channels = [...new Set(app.rawData.map((d) => d.channel))].sort();
-  const select = document.getElementById("channelFilter");
-  if (select) {
-    select.innerHTML = '<option value="All">All Channels</option>';
-    channels.forEach((ch) => {
-      const opt = document.createElement("option");
-      opt.value = ch;
-      opt.textContent = ch;
-      select.appendChild(opt);
+          const parsed = rows
+            .map((r) => buildRowObj(headers, r))
+            .filter(Boolean);
+
+          rawRows = parsed;
+          resolve(true);
+        } catch (e) {
+          showError("Error parsing CSV. " + e.message);
+          resolve(false);
+        }
+      },
+      error: (err) => {
+        showError("CSV download error: " + err.message);
+        resolve(false);
+      }
     });
+  });
+}
+
+/* ===============================
+   FILTERS
+================================ */
+function uniqueChannels(rows) {
+  const s = new Set(rows.map((r) => r.channel));
+  return ["All", ...Array.from(s).sort()];
+}
+
+function setChannelOptions() {
+  const sel = document.getElementById("channelFilter");
+  sel.innerHTML = "";
+  for (const c of uniqueChannels(rawRows)) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c === "All" ? "All Channels" : c;
+    sel.appendChild(opt);
   }
+}
 
-  app.updateDashboard();
-};
+function getDateInputs() {
+  const isMobile = window.matchMedia("(max-width: 767px)").matches;
+  const s = document.getElementById(isMobile ? "startDateMobile" : "startDate").value;
+  const e = document.getElementById(isMobile ? "endDateMobile" : "endDate").value;
+  return { s, e };
+}
 
-app.updateDashboard = () => {
-  const start =
-    document.getElementById("startDate")?.valueAsDate ||
-    document.getElementById("startDateMobile")?.valueAsDate;
+function syncDateInputs() {
+  // Mirror values both ways (desktop ↔ mobile)
+  const sD = document.getElementById("startDate");
+  const eD = document.getElementById("endDate");
+  const sM = document.getElementById("startDateMobile");
+  const eM = document.getElementById("endDateMobile");
+  if (sD && sM) sM.value = sD.value;
+  if (eD && eM) eM.value = eD.value;
+}
 
-  const end =
-    document.getElementById("endDate")?.valueAsDate ||
-    document.getElementById("endDateMobile")?.valueAsDate;
-
-  if (end) end.setHours(23, 59, 59, 999);
-
+function applyFilters() {
+  const { s, e } = getDateInputs();
   const channel = document.getElementById("channelFilter")?.value || "All";
 
-  app.filteredData = app.rawData.filter((d) => {
-    const inDate = (!start || d.date >= start) && (!end || d.date <= end);
-    const inChannel = channel === "All" || d.channel === channel;
-    return inDate && inChannel;
+  const start = s ? new Date(s + "T00:00:00") : null;
+  const end = e ? new Date(e + "T23:59:59") : null;
+
+  filteredRows = rawRows.filter((r) => {
+    if (start && r.date < start) return false;
+    if (end && r.date > end) return false;
+    if (channel !== "All" && r.channel !== channel) return false;
+    return true;
   });
 
-  const totals = {
-    spend: 0,
-    impressions: 0,
-    clicks: 0,
-    leads: 0,
-    booked: 0,
-    showUps: 0,
-    qualifiedCalls: 0,
-    dealsClosed: 0,
-    revenue: 0,
-    cashIn: 0,
+  renderAll();
+}
+
+/* ===============================
+   KPI + METRICS
+================================ */
+function sum(rows, key) {
+  return rows.reduce((acc, r) => acc + num(r[key]), 0);
+}
+
+function computeTotals(rows) {
+  const spend = sum(rows, "spend");
+  const revenue = sum(rows, "revenue");
+  const cash = sum(rows, "cash");
+  const impressions = sum(rows, "impressions");
+  const clicks = sum(rows, "clicks");
+  const leads = sum(rows, "leads");
+  const booked = sum(rows, "booked");
+  const showups = sum(rows, "showups");
+  const qualifiedCalls = sum(rows, "qualifiedCalls");
+  const dealsClosed = sum(rows, "dealsClosed");
+
+  // Ratios
+  const ctr = safeDiv(clicks, impressions);
+  const cpc = safeDiv(spend, clicks);
+  const leadConv = safeDiv(leads, clicks);
+  const cpl = safeDiv(spend, leads);
+  const showRate = safeDiv(showups, booked);
+  const qualCallRate = safeDiv(qualifiedCalls, showups);
+  const closeRate = safeDiv(dealsClosed, qualifiedCalls); // ✅ Deals / Qualified Calls
+
+  const roas = safeDiv(revenue, spend);
+  const mer = safeDiv(cash, spend); // ✅ Cash / Spend
+
+  const cpa = dealsClosed > 0 ? spend / dealsClosed : 0; // ✅ Full CPA (₱)
+
+  // For CPA benchmark based on CPA as % of revenue (your table)
+  const cpaPctRevenue = revenue > 0 ? (cpa / revenue) : 0;
+
+  return {
+    spend, revenue, cash, impressions, clicks, leads, booked, showups, qualifiedCalls, dealsClosed,
+    ctr, cpc, leadConv, cpl, showRate, qualCallRate, closeRate,
+    roas, mer, cpa, cpaPctRevenue
   };
+}
 
-  app.filteredData.forEach((d) => {
-    totals.spend += d.spend;
-    totals.impressions += d.impressions;
-    totals.clicks += d.clicks;
-    totals.leads += d.leads;
-    totals.booked += d.booked;
-    totals.showUps += d.showUps;
-    totals.qualifiedCalls += d.qualifiedCalls;
-    totals.dealsClosed += d.dealsClosed;
-    totals.revenue += d.revenue;
-    totals.cashIn += d.cashIn;
-  });
+function kpiCard(label, value, sub = "", accent = "") {
+  return `
+    <div class="bg-white rounded-lg card-shadow p-3">
+      <div class="text-[10px] font-bold text-tmt-600 uppercase">${label}</div>
+      <div class="text-sm font-extrabold text-slate-800 mt-0.5">${value}</div>
+      ${sub ? `<div class="text-[10px] mt-0.5 ${accent}">${sub}</div>` : ""}
+    </div>
+  `;
+}
 
-  const safeDiv = (n, d) => (d > 0 ? n / d : 0);
+function cpaBigCard(value, statusText) {
+  const isRisk = /risky/i.test(statusText);
+  const stripe = isRisk ? "border-red-500" : "border-tmt-400";
+  const statusColor = isRisk ? "text-red-600" : "text-tmt-700";
 
-  // Core ratios
-  const ctr = safeDiv(totals.clicks, totals.impressions);
-  const cpc = safeDiv(totals.spend, totals.clicks);
-  const lcr = safeDiv(totals.leads, totals.clicks);
-  const cpl = safeDiv(totals.spend, totals.leads);
+  return `
+    <div class="bg-white rounded-lg card-shadow p-3 border-r-4 ${stripe} flex flex-col items-center justify-center">
+      <div class="text-[10px] font-bold text-tmt-600 uppercase">Cost per Acquisition (CPA)</div>
+      <div class="text-2xl font-extrabold text-slate-900 mt-1">${value}</div>
+      <div class="text-[11px] font-bold mt-1 ${statusColor}">${statusText}</div>
+    </div>
+  `;
+}
 
-  // Funnel rates
-  const bookRate = safeDiv(totals.booked, totals.leads);
-  const showRate = safeDiv(totals.showUps, totals.booked);
+/* ===============================
+   BENCHMARK RULES (Peso + Full Names)
+   Based on your provided tables
+================================ */
+function statusBadge(status) {
+  const s = status.toLowerCase();
+  let cls = "bg-tmt-100 text-tmt-800";
+  if (s.includes("excellent")) cls = "bg-emerald-500 text-white";
+  else if (s.includes("very good")) cls = "bg-emerald-400 text-white";
+  else if (s.includes("good")) cls = "bg-green-500 text-white";
+  else if (s.includes("acceptable") || s.includes("average") || s.includes("break-even") || s.includes("fair")) cls = "bg-amber-400 text-white";
+  else if (s.includes("risky") || s.includes("weak") || s.includes("expensive") || s.includes("unprofitable")) cls = "bg-red-500 text-white";
 
-  // NEW: qualified call rate (Show-ups -> Qualified Calls)
-  const qualifiedCallRate = safeDiv(totals.qualifiedCalls, totals.showUps);
+  return `<span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${cls}">${status}</span>`;
+}
 
-  // NEW: close rate = Deals Closed / Qualified Calls (as you requested)
-  const closeRate = safeDiv(totals.dealsClosed, totals.qualifiedCalls);
+function benchmarkCTR(v) {
+  if (v < 0.007) return "Weak";
+  if (v < 0.010) return "Acceptable / Average";
+  if (v < 0.015) return "Good";
+  if (v < 0.025) return "Very Good";
+  return "Excellent";
+}
 
-  // CPA = Spend / Deals Closed
-  const cpa = safeDiv(totals.spend, totals.dealsClosed);
+function benchmarkCPC(v) {
+  if (v <= 10) return "Excellent";
+  if (v <= 20) return "Good";
+  if (v <= 40) return "Acceptable";
+  if (v <= 70) return "Expensive";
+  return "Very Expensive";
+}
 
-  // ROAS = Revenue(Booked) / Spend
-  const roas = safeDiv(totals.revenue, totals.spend);
+function benchmarkLeadConv(v) {
+  if (v < 0.05) return "Weak";
+  if (v < 0.10) return "Acceptable";
+  if (v < 0.20) return "Good";
+  if (v < 0.30) return "Very Good";
+  return "Excellent";
+}
 
-  // MER = Cash-in(Collected) / Spend  (corrected)
-  const mer = safeDiv(totals.cashIn, totals.spend);
+function benchmarkCPL(v) {
+  if (v <= 150) return "Excellent";
+  if (v <= 300) return "Good";
+  if (v <= 600) return "Acceptable";
+  if (v <= 1000) return "Expensive";
+  return "Very Expensive";
+}
 
-  app.aggregates = {
-    totals,
-    ctr,
-    cpc,
-    lcr,
-    cpl,
-    bookRate,
-    showRate,
-    qualifiedCallRate,
-    closeRate,
-    cpa,
-    roas,
-    mer,
-  };
+function benchmarkShowRate(v) {
+  if (v < 0.50) return "Weak";
+  if (v < 0.60) return "Acceptable";
+  if (v < 0.70) return "Good";
+  if (v < 0.80) return "Very Good";
+  return "Excellent";
+}
 
-  app.renderKPIs();
-  app.renderFunnel();
-  app.renderCharts();
-  app.renderBenchmarksAndFocus();
-  app.renderTable();
-};
+function benchmarkCloseRate(v) {
+  if (v < 0.10) return "Weak";
+  if (v < 0.15) return "Acceptable";
+  if (v < 0.25) return "Good";
+  if (v < 0.35) return "Very Good";
+  return "Excellent";
+}
 
-app.renderKPIs = () => {
-  const ag = app.aggregates;
+function benchmarkMER(v) {
+  if (v < 2.0) return "Inefficient / Risky";
+  if (v < 3.0) return "Break-even / Acceptable";
+  if (v < 4.0) return "Good";
+  if (v < 6.0) return "Very Good";
+  return "Excellent";
+}
 
-  // Top row KPI cards (7 items)
-  const kpis = [
-    { title: "Ad Spend", val: app.currencyFormatter.format(ag.totals.spend) },
-    { title: "Revenue (Booked)", val: app.currencyFormatter.format(ag.totals.revenue) },
-    { title: "Cash Collected", val: app.currencyFormatter.format(ag.totals.cashIn) },
-    { title: "Qualified Calls", val: app.numberFormatter.format(ag.totals.qualifiedCalls) },
-    { title: "Deals Closed", val: app.numberFormatter.format(ag.totals.dealsClosed) },
-    { title: "Return on Ad Spend (ROAS)", val: ag.roas.toFixed(2) + "x", status: app.getBenchmark("roas", ag.roas) },
-    { title: "Marketing Efficiency Ratio (MER)", val: ag.mer.toFixed(2) + "x", status: app.getBenchmark("mer", ag.mer) },
+// CPA benchmark based on CPA as % of revenue (your table)
+function benchmarkCPA_pctRevenue(v) {
+  if (v < 0.05) return "Excellent";
+  if (v < 0.10) return "Very Good";
+  if (v < 0.20) return "Acceptable";
+  if (v < 0.30) return "Risky";
+  return "Usually Unprofitable";
+}
+
+/* ===============================
+   RENDER: BENCHMARK TABLE + FOCUS
+================================ */
+function renderBenchmarks(t) {
+  const rows = [
+    { name: "Click-Through Rate (CTR)", value: pct(t.ctr), status: benchmarkCTR(t.ctr) },
+    { name: "Cost per Click (CPC)", value: peso(t.cpc), status: benchmarkCPC(t.cpc) },
+    { name: "Lead Conversion Rate (Clicks → Lead)", value: pct(t.leadConv), status: benchmarkLeadConv(t.leadConv) },
+    { name: "Cost per Lead (CPL)", value: peso(t.cpl), status: benchmarkCPL(t.cpl) },
+    { name: "Show-Up Rate (Booked → Show-Ups)", value: pct(t.showRate), status: benchmarkShowRate(t.showRate) },
+    { name: "Qualified Call Rate (Show-Ups → Qualified Calls)", value: pct(t.qualCallRate), status: benchmarkLeadConv(t.qualCallRate) }, // reuse conversion scale
+    { name: "Close Rate (Qualified Calls → Deals Closed)", value: pct(t.closeRate), status: benchmarkCloseRate(t.closeRate) },
+    { name: "Cost per Acquisition (CPA)", value: peso(t.cpa), status: benchmarkCPA_pctRevenue(t.cpaPctRevenue) },
+    { name: "Return on Ad Spend (ROAS)", value: (t.roas || 0).toFixed(2) + "x", status: (t.roas >= 3 ? "Excellent" : t.roas >= 2 ? "Good" : "Risky") },
+    { name: "Marketing Efficiency Ratio (MER)", value: (t.mer || 0).toFixed(2) + "x", status: benchmarkMER(t.mer) }
   ];
 
+  const body = document.getElementById("benchmarkBody");
+  body.innerHTML = rows.map(r => `
+    <tr>
+      <td class="px-2 py-1.5 text-slate-700">${r.name}</td>
+      <td class="px-2 py-1.5 text-right font-bold text-slate-800">${r.value}</td>
+      <td class="px-2 py-1.5 text-center">${statusBadge(r.status)}</td>
+    </tr>
+  `).join("");
+
+  renderFocus(rows);
+}
+
+function renderFocus(benchRows) {
+  const fairOrRisky = benchRows.filter(r => {
+    const s = r.status.toLowerCase();
+    return s.includes("fair") || s.includes("acceptable") || s.includes("break-even") || s.includes("weak") || s.includes("risky") || s.includes("expensive") || s.includes("unprofitable") || s.includes("inefficient");
+  });
+
+  const risky = fairOrRisky.filter(r => /weak|risky|expensive|unprofitable|inefficient/i.test(r.status));
+  const fair = fairOrRisky.filter(r => !/weak|risky|expensive|unprofitable|inefficient/i.test(r.status));
+
+  const summary = document.getElementById("focusSummary");
+  summary.textContent = `Needs Attention: ${risky.length} Risky • ${fair.length} Fair`;
+
+  const list = document.getElementById("focusList");
+  if (fairOrRisky.length === 0) {
+    list.innerHTML = `<span class="text-tmt-700 font-bold">All metrics look healthy.</span>`;
+    return;
+  }
+
+  list.innerHTML = fairOrRisky.map(r => {
+    const isRisk = /weak|risky|expensive|unprofitable|inefficient/i.test(r.status);
+    const color = isRisk ? "text-red-600" : "text-amber-600";
+    return `<div class="mt-0.5"><span class="font-bold ${color}">${r.name}:</span> <span class="font-bold ${color}">${r.status}</span> <span class="text-slate-600">(${r.value})</span></div>`;
+  }).join("");
+}
+
+/* ===============================
+   KPI RENDER (MER back on top row, CPA alone in row 2)
+================================ */
+function renderKPIs(t) {
   const top = document.getElementById("kpiTopRow");
-  if (top) {
-    top.innerHTML = kpis
-      .map((k) => {
-        const s = k.status;
-        const stripe = s ? `<div class="absolute right-0 top-0 w-1 h-full ${s.bgClass}"></div>` : "";
-        return `
-          <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center relative overflow-hidden hover:border-tmt-300 transition">
-            ${stripe}
-            <div class="text-[9px] font-bold text-tmt-500 uppercase tracking-wider mb-0.5">${k.title}</div>
-            <div class="text-sm font-bold text-slate-800 truncate leading-none">${k.val}</div>
-          </div>
-        `;
-      })
-      .join("");
-  }
 
-  // CPA big card (2nd row only)
-  const cpaStatus = app.getBenchmark("cpa", ag.cpa);
-  const statusText = cpaStatus ? cpaStatus.label : "";
-  const statusColor = cpaStatus ? cpaStatus.textClass : "text-slate-500";
-  const stripe = cpaStatus ? `<div class="absolute right-0 top-0 w-1 h-full ${cpaStatus.bgClass}"></div>` : "";
+  // 7 KPI cards in row 1 (MER included here)
+  top.innerHTML = [
+    kpiCard("Ad Spend", peso(t.spend)),
+    kpiCard("Revenue (Booked)", peso(t.revenue)),
+    kpiCard("Cash Collected", peso(t.cash)),
+    kpiCard("Qualified Calls", String(t.qualifiedCalls)),
+    kpiCard("Deals Closed", String(t.dealsClosed)),
+    kpiCard("Return on Ad Spend (ROAS)", (t.roas || 0).toFixed(2) + "x"),
+    kpiCard("Marketing Efficiency Ratio (MER)", (t.mer || 0).toFixed(2) + "x")
+  ].join("");
 
-  const cpaEl = document.getElementById("kpiCPAContainer");
-  if (cpaEl) {
-    cpaEl.innerHTML = `
-      <div class="bg-white rounded border border-tmt-100 p-3 shadow-sm relative overflow-hidden flex flex-col items-center justify-center text-center">
-        ${stripe}
-        <div class="text-[10px] font-bold text-tmt-600 uppercase tracking-wider">Cost per Acquisition (CPA)</div>
-        <div class="text-2xl font-extrabold text-slate-800 mt-1">${app.currencyFormatter.format(ag.cpa)}</div>
-        <div class="text-[11px] font-bold mt-1 ${statusColor}">${statusText}</div>
+  // CPA alone, centered in row 2
+  const cpaStatus = benchmarkCPA_pctRevenue(t.cpaPctRevenue);
+  document.getElementById("kpiCPAContainer").innerHTML = cpaBigCard(peso(t.cpa), cpaStatus);
+}
+
+/* ===============================
+   FUNNEL RENDER (Image 2 style)
+================================ */
+function funnelRow(label, iconClass, value, rateText, widthPct) {
+  // widthPct: 100 down to smaller
+  const width = Math.max(36, Math.min(100, widthPct));
+  return `
+    <div class="funnel-row" style="width:${width}%">
+      <div class="flex items-center">
+        <div class="funnel-icon"><i class="${iconClass}"></i></div>
+        <div class="text-[12px] text-slate-800">${label}</div>
       </div>
-    `;
-  }
-};
+      <div class="flex items-center gap-2">
+        <div class="funnel-stat">${value}</div>
+      </div>
+      ${rateText ? `<div class="funnel-connector"><i class="fa-solid fa-check"></i> ${rateText}</div>` : ``}
+    </div>
+  `;
+}
 
-app.renderFunnel = () => {
-  const ag = app.aggregates;
+function renderFunnel(t, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
 
-  const stages = [
-    { name: "Impressions", icon: "fa-eye", count: ag.totals.impressions, conv: null },
-    { name: "Clicks", icon: "fa-arrow-pointer", count: ag.totals.clicks, conv: ag.ctr },
-    { name: "Leads", icon: "fa-user-check", count: ag.totals.leads, conv: ag.lcr },
-    { name: "Booked", icon: "fa-phone", count: ag.totals.booked, conv: ag.bookRate },
-    { name: "Show-Ups", icon: "fa-video", count: ag.totals.showUps, conv: ag.showRate },
-    { name: "Qualified Calls", icon: "fa-user-tie", count: ag.totals.qualifiedCalls, conv: ag.qualifiedCallRate },
-    { name: "Deals Closed", icon: "fa-handshake", count: ag.totals.dealsClosed, conv: ag.closeRate },
+  // Build funnel steps
+  const steps = [
+    { label: "Impressions", icon: "fa-solid fa-eye", value: t.impressions, denom: null },
+    { label: "Clicks", icon: "fa-solid fa-arrow-pointer", value: t.clicks, denom: t.impressions },
+    { label: "Leads", icon: "fa-solid fa-user", value: t.leads, denom: t.clicks },
+    { label: "Booked", icon: "fa-solid fa-phone", value: t.booked, denom: t.leads },
+    { label: "Show-Ups", icon: "fa-solid fa-video", value: t.showups, denom: t.booked },
+    { label: "Qualified Calls", icon: "fa-solid fa-user-check", value: t.qualifiedCalls, denom: t.showups },
+    { label: "Deals Closed", icon: "fa-solid fa-handshake", value: t.dealsClosed, denom: t.qualifiedCalls }
   ];
 
-  const buildHTML = () => {
-    let html = '<div class="funnel-flow-line"></div>';
-    stages.forEach((stage, idx) => {
-      const width = 88 - idx * 8; // funnel effect
-      const connector =
-        stage.conv === null
-          ? ""
-          : `
-            <div class="funnel-connector">
-              <i class="fa-solid fa-chevron-down text-[8px] text-tmt-400"></i>
-              <span class="font-bold text-tmt-800">${(stage.conv * 100).toFixed(1)}%</span>
-            </div>
-          `;
+  const max = Math.max(...steps.map(s => num(s.value)), 1);
 
-      html += `
-        <div class="funnel-row" style="width:${Math.max(width, 44)}%;">
-          <div class="flex items-center">
-            <i class="fa-solid ${stage.icon} funnel-icon"></i>
-            <span class="truncate">${stage.name}</span>
-          </div>
-          <span class="funnel-stat">${app.numberFormatter.format(stage.count)}</span>
-          ${connector}
-        </div>
-      `;
+  el.innerHTML = `
+    <div class="funnel-flow-line"></div>
+    ${steps.map((s, i) => {
+      const v = num(s.value);
+      const w = (v / max) * 100;
+      const rate = (s.denom == null) ? "" : pct(safeDiv(v, s.denom));
+      return funnelRow(s.label, s.icon, v.toLocaleString("en-PH"), rate ? rate : "", w);
+    }).join("")}
+  `;
+}
+
+/* ===============================
+   TABLE RENDER (Top rows dropdown)
+================================ */
+function renderTable(rows) {
+  const search = (document.getElementById("tableSearch")?.value || "").trim().toLowerCase();
+  const limit = Number(document.getElementById("rowLimit")?.value || 10);
+
+  let list = rows.slice().sort((a,b) => a.date - b.date);
+
+  // Search filter
+  if (search) {
+    list = list.filter(r => {
+      return (
+        r.dateRaw.toLowerCase().includes(search) ||
+        r.channel.toLowerCase().includes(search) ||
+        r.campaign.toLowerCase().includes(search)
+      );
     });
-    return html;
-  };
-
-  const desktop = document.getElementById("funnelContainer");
-  if (desktop) desktop.innerHTML = buildHTML();
-
-  const mobile = document.getElementById("funnelContainerMobile");
-  if (mobile) mobile.innerHTML = buildHTML();
-};
-
-app.setChartMode = (mode) => {
-  app.chartMode = mode;
-
-  // Desktop buttons
-  const d = document.getElementById("btnDaily");
-  const w = document.getElementById("btnWeekly");
-  if (d && w) {
-    d.className =
-      mode === "daily"
-        ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
-        : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
-    w.className =
-      mode === "weekly"
-        ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
-        : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
   }
 
-  // Mobile buttons
-  const dm = document.getElementById("btnDailyMobile");
-  const wm = document.getElementById("btnWeeklyMobile");
-  if (dm && wm) {
-    dm.className =
-      mode === "daily"
-        ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
-        : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
-    wm.className =
-      mode === "weekly"
-        ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
-        : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
+  // Top N rows only (prevents internal scrolling)
+  list = list.slice(0, limit);
+
+  const header = document.getElementById("tableHeader");
+  const body = document.getElementById("tableBody");
+
+  const cols = [
+    { k: "date", t: "Date", fmt: (r) => fmtShortDate(r.date) },
+    { k: "channel", t: "Chan", fmt: (r) => r.channel },
+    { k: "spend", t: "Spend", fmt: (r) => peso(r.spend) },
+    { k: "clicks", t: "Clicks", fmt: (r) => r.clicks.toLocaleString("en-PH") },
+    { k: "leads", t: "Leads", fmt: (r) => r.leads.toLocaleString("en-PH") },
+    { k: "qualifiedCalls", t: "Qual Calls", fmt: (r) => r.qualifiedCalls.toLocaleString("en-PH") },
+    { k: "booked", t: "Booked", fmt: (r) => r.booked.toLocaleString("en-PH") },
+    { k: "showups", t: "Show", fmt: (r) => r.showups.toLocaleString("en-PH") },
+    { k: "dealsClosed", t: "Deals", fmt: (r) => r.dealsClosed.toLocaleString("en-PH") },
+    { k: "revenue", t: "Rev", fmt: (r) => peso(r.revenue) }
+  ];
+
+  header.innerHTML = cols.map(c => `<th class="px-2 py-2 text-[10px] font-bold">${c.t}</th>`).join("");
+
+  body.innerHTML = list.map(r => `
+    <tr>
+      ${cols.map(c => `<td class="px-2 py-1.5">${c.fmt(r)}</td>`).join("")}
+    </tr>
+  `).join("");
+}
+
+/* ===============================
+   TRENDS
+================================ */
+function groupByDay(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const key = r.date.toISOString().slice(0,10);
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push(r);
   }
+  return Array.from(m.entries())
+    .sort((a,b) => a[0].localeCompare(b[0]))
+    .map(([k, arr]) => ({ key: k, t: computeTotals(arr) }));
+}
 
-  app.renderCharts();
-};
+function groupByWeek(rows) {
+  // ISO-week-ish grouping by Monday
+  const m = new Map();
+  for (const r of rows) {
+    const d = new Date(r.date);
+    const day = d.getDay(); // 0 Sun
+    const diff = (day === 0 ? -6 : 1 - day); // Monday start
+    d.setDate(d.getDate() + diff);
+    d.setHours(0,0,0,0);
+    const key = d.toISOString().slice(0,10);
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push(r);
+  }
+  return Array.from(m.entries())
+    .sort((a,b) => a[0].localeCompare(b[0]))
+    .map(([k, arr]) => ({ key: k, t: computeTotals(arr) }));
+}
 
-app.updateChartMetric = (metric) => {
-  app.currentChartMetric = metric;
+function metricValue(t, metric) {
+  switch(metric) {
+    case "ctr": return t.ctr * 100;
+    case "cpc": return t.cpc;
+    case "cpl": return t.cpl;
+    case "mer": return t.mer;
+    default: return t.ctr * 100;
+  }
+}
 
-  document.querySelectorAll(".chart-btn").forEach((btn) => {
-    if (btn.dataset.metric === metric) btn.classList.add("active");
-    else btn.classList.remove("active");
+function metricLabel(metric) {
+  switch(metric) {
+    case "ctr": return "Click-Through Rate (%)";
+    case "cpc": return "Cost per Click (₱)";
+    case "cpl": return "Cost per Lead (₱)";
+    case "mer": return "Marketing Efficiency Ratio (x)";
+    default: return "CTR (%)";
+  }
+}
+
+function renderTrends(rows) {
+  const grouped = currentGranularity === "week" ? groupByWeek(rows) : groupByDay(rows);
+
+  const labels = grouped.map(g => {
+    const d = new Date(g.key);
+    return currentGranularity === "week" ? `Wk of ${fmtShortDate(d)}` : fmtShortDate(d);
   });
 
-  app.renderCharts();
-};
-
-app.renderCharts = () => {
-  // Group by day/week
-  const grouped = new Map();
-  app.filteredData.forEach((d) => {
-    let key;
-    if (app.chartMode === "weekly") {
-      const date = new Date(d.date);
-      date.setDate(date.getDate() - date.getDay()); // Sunday start
-      key = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    } else {
-      key = d.date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    }
-
-    if (!grouped.has(key)) grouped.set(key, { s: 0, c: 0, i: 0, l: 0, cash: 0 });
-    const g = grouped.get(key);
-    g.s += d.spend;
-    g.c += d.clicks;
-    g.i += d.impressions;
-    g.l += d.leads;
-    g.cash += d.cashIn;
-  });
-
-  const labels = Array.from(grouped.keys());
-  const safeDiv = (n, d) => (d > 0 ? n / d : 0);
-
-  const values = Array.from(grouped.values()).map((g) => {
-    switch (app.currentChartMetric) {
-      case "ctr":
-        return safeDiv(g.c, g.i) * 100;
-      case "cpc":
-        return safeDiv(g.s, g.c);
-      case "cpl":
-        return safeDiv(g.s, g.l);
-      case "mer":
-        return safeDiv(g.cash, g.s);
-      default:
-        return 0;
-    }
-  });
+  const values = grouped.map(g => metricValue(g.t, currentMetric));
 
   // Desktop chart
   const ctx = document.getElementById("trendChart")?.getContext("2d");
   if (ctx) {
-    if (app.chartInstance) app.chartInstance.destroy();
-    app.chartInstance = new Chart(ctx, {
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(ctx, {
       type: "line",
       data: {
         labels,
-        datasets: [
-          {
-            data: values,
-            borderColor: "#16a34a",
-            backgroundColor: (c) => {
-              const grad = c.chart.ctx.createLinearGradient(0, 0, 0, 220);
-              grad.addColorStop(0, "rgba(22, 163, 74, 0.20)");
-              grad.addColorStop(1, "rgba(22, 163, 74, 0)");
-              return grad;
-            },
-            borderWidth: 2,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 2,
-          },
-        ],
+        datasets: [{
+          label: metricLabel(currentMetric),
+          data: values,
+          tension: 0.35,
+          fill: true
+        }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          y: {
-            beginAtZero: true,
-            grid: { color: "#f0fdf4" },
-            ticks: { font: { size: 9 } },
-          },
-          x: {
-            grid: { display: false },
-            ticks: { maxTicksLimit: 8, font: { size: 9 } },
-          },
-        },
-      },
+          y: { ticks: { font: { size: 10 } } },
+          x: { ticks: { font: { size: 10 } } }
+        }
+      }
     });
   }
 
   // Mobile chart
   const ctxM = document.getElementById("trendChartMobile")?.getContext("2d");
   if (ctxM) {
-    if (app.chartInstanceMobile) app.chartInstanceMobile.destroy();
-    app.chartInstanceMobile = new Chart(ctxM, {
+    if (trendChartMobile) trendChartMobile.destroy();
+    trendChartMobile = new Chart(ctxM, {
       type: "line",
       data: {
         labels,
-        datasets: [
-          {
-            data: values,
-            borderColor: "#16a34a",
-            backgroundColor: (c) => {
-              const grad = c.chart.ctx.createLinearGradient(0, 0, 0, 260);
-              grad.addColorStop(0, "rgba(22, 163, 74, 0.20)");
-              grad.addColorStop(1, "rgba(22, 163, 74, 0)");
-              return grad;
-            },
-            borderWidth: 2,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 2,
-          },
-        ],
+        datasets: [{
+          label: metricLabel(currentMetric),
+          data: values,
+          tension: 0.35,
+          fill: true
+        }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          y: { beginAtZero: true, grid: { color: "#f0fdf4" }, ticks: { font: { size: 10 } } },
-          x: { grid: { display: false }, ticks: { maxTicksLimit: 6, font: { size: 10 } } },
-        },
-      },
+          y: { ticks: { font: { size: 10 } } },
+          x: { ticks: { font: { size: 10 } } }
+        }
+      }
     });
   }
-};
+}
 
-app.getBenchmark = (metric, value) => {
-  const res = (label, bgClass, textClass, score) => ({ label, bgClass, textClass, score });
+/* ===============================
+   MOBILE TABS
+================================ */
+function setupTabs() {
+  const btns = document.querySelectorAll(".tab-btn");
+  const panels = document.querySelectorAll(".tab-panel");
 
-  const EX = res("Excellent", "bg-tmt-500", "text-tmt-600", 3);
-  const GD = res("Good", "bg-tmt-300", "text-tmt-600", 2);
-  const OK = res("Fair", "bg-amber-400", "text-amber-600", 1);
-  const BD = res("Risky", "bg-red-500", "text-red-600", 0);
+  btns.forEach(b => {
+    b.addEventListener("click", () => {
+      btns.forEach(x => x.classList.remove("tab-active"));
+      b.classList.add("tab-active");
 
-  switch (metric) {
-    case "ctr":
-      return value >= 0.015 ? EX : value >= 0.01 ? GD : value >= 0.007 ? OK : BD;
-    case "cpc":
-      return value <= 20 ? EX : value <= 40 ? GD : value <= 70 ? OK : BD;
-    case "lcr":
-      return value >= 0.2 ? EX : value >= 0.1 ? GD : value >= 0.05 ? OK : BD;
-    case "cpl":
-      return value <= 150 ? EX : value <= 300 ? GD : value <= 600 ? OK : BD;
-    case "showRate":
-      return value >= 0.7 ? EX : value >= 0.6 ? GD : value >= 0.5 ? OK : BD;
-    case "qualifiedCallRate":
-      return value >= 0.3 ? EX : value >= 0.2 ? GD : value >= 0.12 ? OK : BD;
-    case "closeRate":
-      return value >= 0.25 ? EX : value >= 0.15 ? GD : value >= 0.10 ? OK : BD;
-    case "roas":
-      return value >= 4 ? EX : value >= 3 ? GD : value >= 2 ? OK : BD;
-    case "mer":
-      return value >= 2.5 ? EX : value >= 2.0 ? GD : value >= 1.5 ? OK : BD;
-    case "cpa":
-      // If you want a better benchmark later, we can calibrate based on your offer economics.
-      return value <= 10000 ? GD : value <= 25000 ? OK : BD;
-    default:
-      return null;
-  }
-};
-
-app.renderBenchmarksAndFocus = () => {
-  const ag = app.aggregates;
-
-  const items = [
-    { name: "Click-Through Rate (CTR)", val: ag.ctr, fmt: app.percentFormatter, k: "ctr" },
-    { name: "Cost per Click (CPC)", val: ag.cpc, fmt: app.currencyFormatter, k: "cpc" },
-    { name: "Lead Conversion Rate (Clicks → Leads)", val: ag.lcr, fmt: app.percentFormatter, k: "lcr" },
-    { name: "Cost per Lead (CPL)", val: ag.cpl, fmt: app.currencyFormatter, k: "cpl" },
-    { name: "Show-Up Rate (Booked → Show-Ups)", val: ag.showRate, fmt: app.percentFormatter, k: "showRate" },
-    { name: "Qualified Call Rate (Show-Ups → Qualified Calls)", val: ag.qualifiedCallRate, fmt: app.percentFormatter, k: "qualifiedCallRate" },
-    { name: "Close Rate (Qualified Calls → Deals Closed)", val: ag.closeRate, fmt: app.percentFormatter, k: "closeRate" },
-    { name: "Cost per Acquisition (CPA)", val: ag.cpa, fmt: app.currencyFormatter, k: "cpa" },
-    { name: "Return on Ad Spend (ROAS)", val: ag.roas, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "roas" },
-    { name: "Marketing Efficiency Ratio (MER)", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
-  ];
-
-  // Benchmarks table
-  const tbody = document.getElementById("benchmarkBody");
-  if (tbody) {
-    tbody.innerHTML = items
-      .map((i) => {
-        const s = app.getBenchmark(i.k, i.val);
-        const badge = s
-          ? `<span class="px-1.5 py-0.5 rounded text-[8px] text-white ${s.bgClass}">${s.label}</span>`
-          : "";
-        return `
-          <tr class="hover:bg-tmt-50">
-            <td class="px-2 py-1 text-slate-600">${i.name}</td>
-            <td class="px-2 py-1 text-right font-mono">${i.fmt.format(i.val)}</td>
-            <td class="px-2 py-1 text-center">${badge}</td>
-          </tr>
-        `;
-      })
-      .join("");
-  }
-
-  // Focus Area: list ALL Fair/Risky
-  const focusList = [];
-  let fair = 0, risky = 0;
-
-  items.forEach((i) => {
-    const s = app.getBenchmark(i.k, i.val);
-    if (!s) return;
-    if (s.label === "Fair" || s.label === "Risky") {
-      if (s.label === "Fair") fair++;
-      if (s.label === "Risky") risky++;
-      focusList.push(`${i.name}: <span class="font-bold ${s.textClass}">${s.label}</span> (${i.fmt.format(i.val)})`);
-    }
+      const target = b.getAttribute("data-tab");
+      panels.forEach(p => p.classList.remove("active"));
+      const el = document.getElementById(target);
+      if (el) el.classList.add("active");
+    });
   });
 
-  const summary = document.getElementById("focusSummary");
-  if (summary) summary.textContent = `Needs Attention: ${risky} Risky • ${fair} Fair`;
-
-  const focusBox = document.getElementById("focusBox");
-  const focusListEl = document.getElementById("focusList");
-  if (focusListEl) {
-    if (focusList.length) {
-      focusListEl.innerHTML = `<ul class="list-disc ml-4">${focusList.map(x => `<li>${x}</li>`).join("")}</ul>`;
-    } else {
-      focusListEl.innerHTML = `<div class="text-slate-600">All key metrics look healthy. Keep scaling what’s working.</div>`;
-    }
+  // Default open KPIs on mobile
+  const isMobile = window.matchMedia("(max-width: 767px)").matches;
+  if (isMobile) {
+    panels.forEach(p => p.classList.remove("active"));
+    document.getElementById("tab-kpis")?.classList.add("active");
   }
+}
 
-  // If nothing to fix, switch border color to green
-  if (focusBox) {
-    focusBox.classList.remove("border-amber-400");
-    focusBox.classList.remove("border-l-4");
-    focusBox.classList.add("border-l-4");
-    focusBox.classList.add(focusList.length ? "border-amber-400" : "border-tmt-400");
-  }
-};
+/* ===============================
+   UI EVENTS
+================================ */
+function setupUI() {
+  // Sync buttons
+  document.getElementById("btnSync")?.addEventListener("click", async () => {
+    await initLoad();
+  });
+  document.getElementById("btnSyncMobile")?.addEventListener("click", async () => {
+    await initLoad();
+  });
 
-app.renderTable = () => {
-  const cols = [
-    "Date",
-    "Chan",
-    "Spend",
-    "Clicks",
-    "Leads",
-    "CPL",
-    "Booked",
-    "Show-Ups",
-    "Qualified Calls",
-    "Deals",
-    "Revenue",
-    "Cash Col."
-  ];
+  // Filter changes
+  document.getElementById("channelFilter")?.addEventListener("change", applyFilters);
 
-  const header = document.getElementById("tableHeader");
-  if (header) {
-    header.innerHTML = cols
-      .map((c) => `<th class="px-3 py-2 font-semibold text-[9px] uppercase">${c}</th>`)
-      .join("");
-  }
+  // Date changes
+  ["startDate","endDate"].forEach(id => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      syncDateInputs();
+      applyFilters();
+    });
+  });
+  ["startDateMobile","endDateMobile"].forEach(id => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      // mirror back to desktop
+      const sD = document.getElementById("startDate");
+      const eD = document.getElementById("endDate");
+      const sM = document.getElementById("startDateMobile");
+      const eM = document.getElementById("endDateMobile");
+      if (sD && sM) sD.value = sM.value;
+      if (eD && eM) eD.value = eM.value;
+      applyFilters();
+    });
+  });
 
-  const body = document.getElementById("tableBody");
-  if (!body) return;
+  // Table controls
+  document.getElementById("rowLimit")?.addEventListener("change", () => renderTable(filteredRows));
+  document.getElementById("tableSearch")?.addEventListener("input", () => renderTable(filteredRows));
 
-  const rows = app.filteredData.slice(0, app.rowLimit);
+  // Trend buttons (both desktop and mobile)
+  document.querySelectorAll(".chart-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".chart-btn").forEach(x => x.classList.remove("active"));
+      // Activate same metric buttons across views
+      const metric = btn.getAttribute("data-metric");
+      document.querySelectorAll(`.chart-btn[data-metric="${metric}"]`).forEach(x => x.classList.add("active"));
+      currentMetric = metric;
+      renderTrends(filteredRows);
+    });
+  });
 
-  body.innerHTML = rows
-    .map((r) => {
-      const cpl = r.leads > 0 ? r.spend / r.leads : 0;
+  document.getElementById("btnDaily")?.addEventListener("click", () => {
+    currentGranularity = "day";
+    renderTrends(filteredRows);
+  });
+  document.getElementById("btnWeekly")?.addEventListener("click", () => {
+    currentGranularity = "week";
+    renderTrends(filteredRows);
+  });
 
-      return `
-      <tr class="hover:bg-tmt-50 border-b border-tmt-50 last:border-0">
-        <td class="px-3 py-2 text-slate-500">${r.date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}</td>
-        <td class="px-3 py-2 font-medium text-tmt-700 truncate max-w-[110px]">${r.channel}</td>
-        <td class="px-3 py-2 text-right">${app.currencyFormatter.format(r.spend)}</td>
-        <td class="px-3 py-2 text-right">${app.numberFormatter.format(r.clicks)}</td>
-        <td class="px-3 py-2 text-right">${app.numberFormatter.format(r.leads)}</td>
-        <td class="px-3 py-2 text-right text-slate-500">${app.currencyFormatter.format(cpl)}</td>
-        <td class="px-3 py-2 text-right">${app.numberFormatter.format(r.booked)}</td>
-        <td class="px-3 py-2 text-right">${app.numberFormatter.format(r.showUps)}</td>
-        <td class="px-3 py-2 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.qualifiedCalls)}</td>
-        <td class="px-3 py-2 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.dealsClosed)}</td>
-        <td class="px-3 py-2 text-right font-bold text-tmt-700">${app.currencyFormatter.format(r.revenue)}</td>
-        <td class="px-3 py-2 text-right">${app.currencyFormatter.format(r.cashIn)}</td>
-      </tr>`;
-    })
-    .join("");
-};
+  document.getElementById("btnDailyMobile")?.addEventListener("click", () => {
+    currentGranularity = "day";
+    renderTrends(filteredRows);
+  });
+  document.getElementById("btnWeeklyMobile")?.addEventListener("click", () => {
+    currentGranularity = "week";
+    renderTrends(filteredRows);
+  });
+}
 
-app.filterTable = (q) => {
-  const rows = document.getElementById("tableBody")?.children;
-  if (!rows) return;
-  const l = (q || "").toLowerCase();
-  for (let r of rows) {
-    r.style.display = r.textContent.toLowerCase().includes(l) ? "" : "none";
-  }
-};
+/* ===============================
+   RENDER ALL
+================================ */
+function renderAll() {
+  setLastUpdated();
+  const t = computeTotals(filteredRows);
+
+  renderKPIs(t);
+  renderFunnel(t, "funnelContainer");
+  renderFunnel(t, "funnelContainerMobile");
+  renderBenchmarks(t);
+  renderTable(filteredRows);
+  renderTrends(filteredRows);
+
+  // Default active metric button
+  document.querySelectorAll(`.chart-btn[data-metric="${currentMetric}"]`).forEach(x => x.classList.add("active"));
+}
+
+/* ===============================
+   INIT
+================================ */
+async function initLoad() {
+  const ok = await loadCSV();
+  if (!ok) return;
+
+  // Populate channels
+  setChannelOptions();
+
+  // Auto-set date range from data (min..max)
+  const dates = rawRows.map(r => r.date).sort((a,b) => a-b);
+  const min = dates[0];
+  const max = dates[dates.length - 1];
+
+  const startISO = min ? min.toISOString().slice(0,10) : "";
+  const endISO = max ? max.toISOString().slice(0,10) : "";
+
+  const sD = document.getElementById("startDate");
+  const eD = document.getElementById("endDate");
+  const sM = document.getElementById("startDateMobile");
+  const eM = document.getElementById("endDateMobile");
+
+  if (sD && !sD.value) sD.value = startISO;
+  if (eD && !eD.value) eD.value = endISO;
+  if (sM) sM.value = sD.value;
+  if (eM) eM.value = eD.value;
+
+  applyFilters();
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  setupTabs();
+  setupUI();
+  await initLoad();
+  setInterval(setLastUpdated, 1000);
+});
