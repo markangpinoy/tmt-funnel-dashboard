@@ -1,1 +1,149 @@
+/* Custom Styles & Layout Tweaks */
+body {
+  background-color: #f0fdf4; /* Green Theme (TMT-50) */
+}
+
+/* Compact Scrollbar - Green Themed */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #dcfce7;
+}
+::-webkit-scrollbar-thumb {
+  background: #86efac;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4ade80;
+}
+
+.card-shadow {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(22, 163, 74, 0.1);
+}
+
+/* --- SOFT MODERN FUNNEL STYLES --- */
+.funnel-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  padding: 15px 0;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* Central Flow Line */
+.funnel-flow-line {
+  position: absolute;
+  top: 15px;
+  bottom: 15px;
+  left: 50%;
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    #dcfce7 0,
+    #dcfce7 8px,
+    transparent 8px,
+    transparent 16px
+  );
+  transform: translateX(-50%);
+  z-index: 0;
+}
+
+.funnel-row {
+  z-index: 10;
+  position: relative;
+  margin-bottom: 10px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+
+  background: linear-gradient(to right, #f0fdf4, #ffffff, #f0fdf4);
+  border: 1px solid #bbf7d0;
+  color: #334155;
+
+  font-weight: 600;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  height: 42px;
+  cursor: default;
+  font-size: 0.8rem;
+}
+
+.funnel-row:hover {
+  transform: translateY(-1px);
+  border-color: #4ade80;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.funnel-stat {
+  background: #dcfce7;
+  color: #166534;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.funnel-icon {
+  width: 24px;
+  text-align: center;
+  color: #16a34a;
+  margin-right: 6px;
+  font-size: 0.9rem;
+}
+
+/* Connector Lines (Conversion rates) */
+.funnel-connector {
+  font-size: 0.7rem;
+  color: #15803d;
+  background-color: white;
+  border: 1px solid #bbf7d0;
+  padding: 2px 6px 2px 6px;
+  border-radius: 12px;
+  position: absolute;
+  right: -65px;
+  top: 50%;
+  transform: translateY(-50%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.funnel-connector::before {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 1px;
+  background: #bbf7d0;
+  position: absolute;
+  left: -10px;
+  top: 50%;
+}
+
+/* Loader */
+.loader {
+  border: 3px solid #dcfce7;
+  border-top: 3px solid #16a34a;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
 
