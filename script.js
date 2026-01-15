@@ -1,11 +1,12 @@
 /* ===========================
    TMT Funnel Tracker - script.js (FULL)
-   Updates:
-   1) Close Rate = Deals Closed / Qualified Calls
-   2) Add Cost per Acquisition (CPA) visible in KPI + Benchmarks
-   3) Benchmarks use FULL metric names (no acronym-only labels)
-   4) CPA KPI is bigger + centered (second row feel)
-   5) Focus Area lists ALL metrics that are Fair/Risky
+   Layout fixes:
+   - MER back to top KPI row (same lane)
+   - CPA is the ONLY KPI on 2nd row (big + centered)
+   - Focus Area text no longer overflows (wrap + clamp)
+   Logic:
+   - Close Rate = Deals Closed / Qualified Calls
+   - CPA = Spend / Deals
    Funnel:
    Impressions → Clicks → Leads → Booked → Show-Ups → Qualified Calls → Deals Closed
    =========================== */
@@ -213,14 +214,10 @@ app.updateDashboard = () => {
     bookRate: safeDiv(totals.booked, totals.leads),
     cpbc: safeDiv(totals.spend, totals.booked),
     showRate: safeDiv(totals.showUps, totals.booked),
-
-    // Show-ups → Qualified Calls
     qualCallRate: safeDiv(totals.qualifiedCalls, totals.showUps),
 
-    // ✅ Close Rate (Qualified Calls → Deals)
+    // ✅ Close Rate and CPA
     closeRate: safeDiv(totals.deals, totals.qualifiedCalls),
-
-    // ✅ Cost per Acquisition (Spend / Deals)
     cpa: safeDiv(totals.spend, totals.deals),
 
     mer: safeDiv(totals.revenue, totals.spend),
@@ -232,21 +229,23 @@ app.updateDashboard = () => {
   app.renderCharts();
   app.renderBenchmarks();
   app.renderTable();
-
-  // ✅ Focus Area: list all Fair/Risky items (after benchmarks computed)
   app.renderFocusArea();
 };
 
+/* ===========================
+   KPI Layout:
+   - Row 1: normal KPIs including MER
+   - Row 2: ONLY CPA big centered
+   =========================== */
 app.renderKPICards = () => {
   const ag = app.aggregates;
   const container = document.getElementById("kpiContainer");
   if (!container) return;
 
-  // ✅ CPA special card: bigger + centered on desktop
-  // On md:grid-cols-6, start at 3 and span 2 => centered lane feel
   const cpaStatus = app.getBenchmark("cpa", ag.cpa);
 
-  const cardsHtml = `
+  // ✅ Row 1: 6 normal cards (MER included)
+  const row1 = `
     <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
       <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Ad Spend</div>
       <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.spend)}</div>
@@ -272,22 +271,32 @@ app.renderKPICards = () => {
       <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.numberFormatter.format(ag.totals.deals)}</div>
     </div>
 
-    <!-- ✅ Bigger centered CPA -->
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Marketing Efficiency Ratio (MER)</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${ag.mer.toFixed(2)}x</div>
+    </div>
+  `;
+
+  // ✅ Row 2: CPA only, big, centered.
+  // We create 6 "grid slots": 2 blank + CPA spans 2 + 2 blank (on md+)
+  const row2 = `
+    <div class="hidden md:block"></div>
+    <div class="hidden md:block"></div>
+
     <div class="bg-white rounded border border-tmt-100 p-3 shadow-sm flex flex-col justify-center text-center relative overflow-hidden hover:border-tmt-300 transition
-                col-span-2 md:col-span-2 md:col-start-3 h-16">
+                col-span-2 h-16">
       ${cpaStatus ? `<div class="absolute right-0 top-0 w-1 h-full ${cpaStatus.bgClass}"></div>` : ""}
       <div class="text-[10px] font-bold text-tmt-600 uppercase tracking-wider mb-1">Cost per Acquisition (CPA)</div>
       <div class="text-xl font-extrabold text-slate-900 leading-none">${app.currencyFormatter.format(ag.cpa)}</div>
       ${cpaStatus ? `<div class="mt-1 text-[10px] font-bold ${cpaStatus.textClass}">${cpaStatus.label}</div>` : ""}
     </div>
 
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center relative overflow-hidden hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Marketing Efficiency Ratio (MER)</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${ag.mer.toFixed(2)}x</div>
-    </div>
+    <div class="hidden md:block"></div>
+    <div class="hidden md:block"></div>
   `;
 
-  container.innerHTML = cardsHtml;
+  // On mobile (2 cols), the blanks are hidden and CPA stays centered-ish by spanning 2.
+  container.innerHTML = row1 + row2;
 };
 
 app.renderFunnel = () => {
@@ -313,7 +322,7 @@ app.renderFunnel = () => {
       name: "Deals Closed",
       icon: "fa-handshake",
       count: ag.totals.deals,
-      conv: safeDiv(ag.totals.deals, ag.totals.qualifiedCalls), // ✅ close rate
+      conv: safeDiv(ag.totals.deals, ag.totals.qualifiedCalls),
     },
   ];
 
@@ -488,7 +497,6 @@ app.getBenchmark = (metric, value) => {
     case "mer":
       return value >= 4 ? EX : value >= 3 ? GD : value >= 2 ? OK : BD;
     case "cpa":
-      // Adjustable CPA thresholds
       return value <= 3000 ? EX : value <= 5000 ? GD : value <= 8000 ? OK : BD;
     default:
       return null;
@@ -510,7 +518,7 @@ app.renderBenchmarks = () => {
     { name: "Marketing Efficiency Ratio (MER)", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
   ];
 
-  app._benchmarkItems = items; // store for Focus Area use
+  app._benchmarkItems = items;
 
   const tbody = document.getElementById("benchmarkBody");
   if (!tbody) return;
@@ -528,15 +536,29 @@ app.renderBenchmarks = () => {
     .join("");
 };
 
+/* ===========================
+   Focus Area: fix overflow
+   - Wrap + clamp to 2 lines
+   - If too long, ellipsis
+   =========================== */
 app.renderFocusArea = () => {
   const stageEl = document.getElementById("bottleneckStage");
   const recEl = document.getElementById("bottleneckRec");
   if (!stageEl || !recEl) return;
 
+  // ✅ force safe wrapping and prevent breaking layout
+  recEl.style.whiteSpace = "normal";
+  recEl.style.overflow = "hidden";
+  recEl.style.textOverflow = "ellipsis";
+  recEl.style.display = "-webkit-box";
+  recEl.style.webkitLineClamp = "2";
+  recEl.style.webkitBoxOrient = "vertical";
+  recEl.style.wordBreak = "break-word";
+
   const items = app._benchmarkItems || [];
   const flagged = items
     .map((i) => ({ ...i, status: app.getBenchmark(i.k, i.val) }))
-    .filter((x) => x.status && x.status.score <= 1); // Fair or Risky
+    .filter((x) => x.status && x.status.score <= 1);
 
   if (!flagged.length) {
     stageEl.textContent = "Healthy Funnel";
@@ -551,7 +573,6 @@ app.renderFocusArea = () => {
   stageEl.textContent = `Needs Attention: ${riskyCount} Risky • ${fairCount} Fair`;
   stageEl.className = "text-[11px] font-bold text-amber-600";
 
-  // Build a compact list line
   const lines = flagged.map((f) => {
     const v =
       f.k === "cpc" || f.k === "cpl" || f.k === "cpa"
