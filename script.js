@@ -1,9 +1,10 @@
 /* ===========================
    TMT Funnel Tracker - script.js (FULL)
-   Update:
-   - REMOVED "Qualified Leads" concept completely
-   - ADDED "Qualified Calls" (Google Sheet column header: "Qualified Calls")
-   - Funnel now: Impressions → Clicks → Leads → Booked → Show-Ups → Qualified Calls → Deals Closed
+   Fixes:
+   1) Close Rate = Deals Closed / Qualified Calls
+   2) Add CPA (Cost per Acquisition) visible in KPI + Benchmarks
+   Funnel:
+   Impressions → Clicks → Leads → Booked → Show-Ups → Qualified Calls → Deals Closed
    =========================== */
 
 const SHEET_CSV_URL =
@@ -32,8 +33,6 @@ const app = {
     maximumFractionDigits: 0,
   }),
 
-  // IMPORTANT: We do NOT map anything called "qualified leads" anymore.
-  // We only map "Qualified Calls" exactly to avoid disqualified mixups.
   keyMap: {
     date: ["date", "day"],
     channel: ["channel", "source", "platform"],
@@ -44,17 +43,14 @@ const app = {
     booked: ["leads booked", "booked calls", "appointments", "calls"],
     showUps: ["show-ups", "show ups", "attended"],
 
-    // ✅ EXACT: Google Sheet header is "Qualified Calls"
+    // exact header: "Qualified Calls"
     qualifiedCalls: ["qualified calls"],
 
-    // ✅ EXACT: Google Sheet header is "Deals Closed"
+    // exact header: "Deals Closed"
     deals: ["deals closed", "deal closed"],
 
     revenue: ["revenue (booked)", "revenue", "sales value"],
     cashIn: ["cash-in (collected)", "cash-in", "cash in", "collected"],
-
-    // Kept only if you want to use later, not displayed:
-    disqualified: ["disqualified leads"],
   },
 };
 
@@ -76,20 +72,14 @@ document.addEventListener("DOMContentLoaded", () => {
   setDates("startDate", "endDate");
   setDates("startDateMobile", "endDateMobile");
 
-  const channelFilter = document.getElementById("channelFilter");
-  if (channelFilter) channelFilter.addEventListener("change", app.updateDashboard);
-
-  const tableSearch = document.getElementById("tableSearch");
-  if (tableSearch) {
-    tableSearch.addEventListener("keyup", (e) => app.filterTable(e.target.value));
-  }
+  document.getElementById("channelFilter")?.addEventListener("change", app.updateDashboard);
+  document.getElementById("tableSearch")?.addEventListener("keyup", (e) => app.filterTable(e.target.value));
 
   app.fetchData();
 });
 
 app.fetchData = () => {
-  const lastUpdated = document.getElementById("lastUpdated");
-  if (lastUpdated) lastUpdated.textContent = "Syncing...";
+  document.getElementById("lastUpdated").textContent = "Syncing...";
 
   Papa.parse(SHEET_CSV_URL, {
     download: true,
@@ -101,7 +91,7 @@ app.fetchData = () => {
         return;
       }
       app.processData(results.data, results.meta.fields);
-      if (lastUpdated) lastUpdated.textContent = "Live: " + new Date().toLocaleTimeString();
+      document.getElementById("lastUpdated").textContent = "Live: " + new Date().toLocaleTimeString();
     },
     error: (err) => app.showError("Network Error: " + err.message),
   });
@@ -118,18 +108,10 @@ app.processData = (data, headers) => {
   const columnMap = {};
   const cleanHeaders = headers.map((h) => (h || "").toLowerCase().trim());
 
-  // Prefer exact match first; fallback to includes.
+  // Prefer exact match first, then includes
   for (const [key, variants] of Object.entries(app.keyMap)) {
-    let idx = -1;
-
-    // 1) Exact match
-    idx = cleanHeaders.findIndex((h) => variants.some((v) => h === v));
-
-    // 2) Includes match
-    if (idx === -1) {
-      idx = cleanHeaders.findIndex((h) => variants.some((v) => h.includes(v)));
-    }
-
+    let idx = cleanHeaders.findIndex((h) => variants.some((v) => h === v));
+    if (idx === -1) idx = cleanHeaders.findIndex((h) => variants.some((v) => h.includes(v)));
     if (idx !== -1) columnMap[key] = headers[idx];
   }
 
@@ -144,37 +126,25 @@ app.processData = (data, headers) => {
 
   app.rawData = data
     .map((row) => {
-      const dateStr = row[columnMap.date];
-      const parsedDate = new Date(dateStr);
-
+      const parsedDate = new Date(row[columnMap.date]);
       return {
         date: !isNaN(parsedDate) ? parsedDate : null,
         channel: row[columnMap.channel] || "Unknown",
-
         spend: safeFloat(row[columnMap.spend]),
         impressions: safeFloat(row[columnMap.impressions]),
         clicks: safeFloat(row[columnMap.clicks]),
-
         leads: safeFloat(row[columnMap.leads]),
         booked: safeFloat(row[columnMap.booked]),
         showUps: safeFloat(row[columnMap.showUps]),
-
-        // ✅ Qualified Calls ONLY
         qualifiedCalls: safeFloat(row[columnMap.qualifiedCalls]),
-
         deals: safeFloat(row[columnMap.deals]),
         revenue: safeFloat(row[columnMap.revenue]),
         cashIn: safeFloat(row[columnMap.cashIn]),
-
-        // not displayed
-        disqualified: safeFloat(row[columnMap.disqualified]),
-
         original: row,
       };
     })
     .filter((item) => item.date);
 
-  // Populate channels
   const channels = [...new Set(app.rawData.map((d) => d.channel))].sort();
   const select = document.getElementById("channelFilter");
   if (select) {
@@ -228,7 +198,7 @@ app.updateDashboard = () => {
     totals.leads += d.leads;
     totals.booked += d.booked;
     totals.showUps += d.showUps;
-    totals.qualifiedCalls += d.qualifiedCalls; // ✅
+    totals.qualifiedCalls += d.qualifiedCalls;
     totals.deals += d.deals;
     totals.revenue += d.revenue;
     totals.cashIn += d.cashIn;
@@ -236,24 +206,30 @@ app.updateDashboard = () => {
 
   const safeDiv = (n, d) => (d > 0 ? n / d : 0);
 
+  // ✅ Close Rate uses Qualified Calls now
+  const closeRate = safeDiv(totals.deals, totals.qualifiedCalls);
+
+  // ✅ CPA shown explicitly (Spend / Deals Closed)
+  const cpa = safeDiv(totals.spend, totals.deals);
+
   app.aggregates = {
     totals,
-
     ctr: safeDiv(totals.clicks, totals.impressions),
     cpc: safeDiv(totals.spend, totals.clicks),
     lcr: safeDiv(totals.leads, totals.clicks),
-
     cpl: safeDiv(totals.spend, totals.leads),
     bookRate: safeDiv(totals.booked, totals.leads),
     cpbc: safeDiv(totals.spend, totals.booked),
-
     showRate: safeDiv(totals.showUps, totals.booked),
 
-    // ✅ Show-ups -> Qualified Calls rate (you can change denominator if you prefer)
+    // Show-ups → Qualified Calls
     qualCallRate: safeDiv(totals.qualifiedCalls, totals.showUps),
 
-    closeRate: safeDiv(totals.deals, totals.showUps),
-    cpa: safeDiv(totals.spend, totals.deals),
+    // ✅ FIXED
+    closeRate,
+
+    // ✅ NEW / Visible
+    cpa,
 
     mer: safeDiv(totals.revenue, totals.spend),
     roas: safeDiv(totals.cashIn, totals.spend),
@@ -269,26 +245,21 @@ app.updateDashboard = () => {
 app.renderKPICards = () => {
   const ag = app.aggregates;
 
+  // ✅ Added CPA card
   const kpis = [
     { title: "Ad Spend", val: app.currencyFormatter.format(ag.totals.spend) },
     { title: "Revenue", val: app.currencyFormatter.format(ag.totals.revenue) },
     { title: "Cash Col.", val: app.currencyFormatter.format(ag.totals.cashIn) },
-
-    // ✅ Qualified Calls (instead of Qualified Leads)
     { title: "Qualified Calls", val: app.numberFormatter.format(ag.totals.qualifiedCalls) },
-
     { title: "Deals", val: app.numberFormatter.format(ag.totals.deals) },
-
-    {
-      title: "MER",
-      val: ag.mer.toFixed(2) + "x",
-      status: app.getBenchmark("mer", ag.mer),
-    },
+    { title: "CPA", val: app.currencyFormatter.format(ag.cpa), status: app.getBenchmark("cpa", ag.cpa) },
+    { title: "MER", val: ag.mer.toFixed(2) + "x", status: app.getBenchmark("mer", ag.mer) },
   ];
 
   const container = document.getElementById("kpiContainer");
   if (!container) return;
 
+  // Keep layout compact (if your grid is md:grid-cols-6, this will just wrap nicely)
   container.innerHTML = kpis
     .map(
       (k) => `
@@ -315,8 +286,6 @@ app.renderFunnel = () => {
     { name: "Leads", icon: "fa-user-check", count: ag.totals.leads, conv: ag.lcr },
     { name: "Booked", icon: "fa-phone", count: ag.totals.booked, conv: ag.bookRate },
     { name: "Show-Ups", icon: "fa-video", count: ag.totals.showUps, conv: ag.showRate },
-
-    // ✅ Qualified Calls stage
     {
       name: "Qualified Calls",
       icon: "fa-user-shield",
@@ -324,7 +293,13 @@ app.renderFunnel = () => {
       conv: safeDiv(ag.totals.qualifiedCalls, ag.totals.showUps),
     },
 
-    { name: "Deals Closed", icon: "fa-handshake", count: ag.totals.deals, conv: ag.closeRate },
+    // ✅ Connector shown here will be Close Rate = Deals / Qualified Calls
+    {
+      name: "Deals Closed",
+      icon: "fa-handshake",
+      count: ag.totals.deals,
+      conv: safeDiv(ag.totals.deals, ag.totals.qualifiedCalls),
+    },
   ];
 
   let html = '<div class="funnel-flow-line"></div>';
@@ -356,7 +331,7 @@ app.renderFunnel = () => {
 
   container.innerHTML = html;
 
-  // Bottleneck focus
+  // Bottleneck focus (include qualified + close)
   const metrics = [
     { key: "ctr", name: "CTR", val: ag.ctr },
     { key: "lcr", name: "Lead Conv", val: ag.lcr },
@@ -389,7 +364,7 @@ app.renderFunnel = () => {
         lcr: "Improve landing page or offer.",
         showRate: "Improve follow-up + confirmations.",
         qualCallRate: "Tighten qualification + call handling.",
-        closeRate: "Sales coaching / refine offer fit.",
+        closeRate: "Increase sales skill + offer fit.",
       };
 
       bRec.textContent = recs[worst.key] || "Optimize the bottleneck.";
@@ -456,13 +431,12 @@ app.renderCharts = () => {
       key = d.date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     }
 
-    if (!grouped.has(key)) grouped.set(key, { s: 0, c: 0, i: 0, l: 0, b: 0, rev: 0 });
+    if (!grouped.has(key)) grouped.set(key, { s: 0, c: 0, i: 0, l: 0, rev: 0 });
     const g = grouped.get(key);
     g.s += d.spend;
     g.c += d.clicks;
     g.i += d.impressions;
     g.l += d.leads;
-    g.b += d.booked;
     g.rev += d.revenue;
   });
 
@@ -536,14 +510,22 @@ app.getBenchmark = (metric, value) => {
     case "showRate":
       return value >= 0.7 ? EX : value >= 0.6 ? GD : value >= 0.5 ? OK : BD;
 
-    // ✅ Practical benchmark for Qualified Call Rate (Show-ups → Qualified Calls)
+    // Qualified Call Rate (Show-Ups → Qualified Calls)
     case "qualCallRate":
       return value >= 0.2 ? EX : value >= 0.1 ? GD : value >= 0.05 ? OK : BD;
 
+    // ✅ Close Rate (Qualified Calls → Deals Closed)
     case "closeRate":
-      return value >= 0.25 ? EX : value >= 0.15 ? GD : value >= 0.1 ? OK : BD;
+      return value >= 0.35 ? EX : value >= 0.25 ? GD : value >= 0.15 ? OK : BD;
+
     case "mer":
       return value >= 4 ? EX : value >= 3 ? GD : value >= 2 ? OK : BD;
+
+    // ✅ CPA Benchmarks in PHP
+    case "cpa":
+      // You can adjust these if you want
+      return value <= 3000 ? EX : value <= 5000 ? GD : value <= 8000 ? OK : BD;
+
     default:
       return null;
   }
@@ -558,11 +540,14 @@ app.renderBenchmarks = () => {
     { name: "Lead Conv", val: ag.lcr, fmt: app.percentFormatter, k: "lcr" },
     { name: "CPL", val: ag.cpl, fmt: app.currencyFormatter, k: "cpl" },
     { name: "Show Rate", val: ag.showRate, fmt: app.percentFormatter, k: "showRate" },
-
-    // ✅ New: Qualified Call Rate
     { name: "Qualified Call Rate", val: ag.qualCallRate, fmt: app.percentFormatter, k: "qualCallRate" },
 
+    // ✅ Fixed close rate benchmark
     { name: "Close Rate", val: ag.closeRate, fmt: app.percentFormatter, k: "closeRate" },
+
+    // ✅ Added CPA benchmark row
+    { name: "CPA", val: ag.cpa, fmt: app.currencyFormatter, k: "cpa" },
+
     { name: "MER", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
   ];
 
@@ -584,7 +569,6 @@ app.renderBenchmarks = () => {
 
 app.renderTable = () => {
   const cols = ["Date", "Chan", "Spend", "Click", "Lead", "Qual Calls", "Book", "Show", "Deals", "Rev"];
-
   const header = document.getElementById("tableHeader");
   const body = document.getElementById("tableBody");
   if (!header || !body) return;
