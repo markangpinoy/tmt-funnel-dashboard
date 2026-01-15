@@ -1,8 +1,11 @@
 /* ===========================
    TMT Funnel Tracker - script.js (FULL)
-   Fixes:
+   Updates:
    1) Close Rate = Deals Closed / Qualified Calls
-   2) Add CPA (Cost per Acquisition) visible in KPI + Benchmarks
+   2) Add Cost per Acquisition (CPA) visible in KPI + Benchmarks
+   3) Benchmarks use FULL metric names (no acronym-only labels)
+   4) CPA KPI is bigger + centered (second row feel)
+   5) Focus Area lists ALL metrics that are Fair/Risky
    Funnel:
    Impressions → Clicks → Leads → Booked → Show-Ups → Qualified Calls → Deals Closed
    =========================== */
@@ -42,13 +45,8 @@ const app = {
     leads: ["leads", "contacts"],
     booked: ["leads booked", "booked calls", "appointments", "calls"],
     showUps: ["show-ups", "show ups", "attended"],
-
-    // exact header: "Qualified Calls"
     qualifiedCalls: ["qualified calls"],
-
-    // exact header: "Deals Closed"
     deals: ["deals closed", "deal closed"],
-
     revenue: ["revenue (booked)", "revenue", "sales value"],
     cashIn: ["cash-in (collected)", "cash-in", "cash in", "collected"],
   },
@@ -79,7 +77,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 app.fetchData = () => {
-  document.getElementById("lastUpdated").textContent = "Syncing...";
+  const lu = document.getElementById("lastUpdated");
+  if (lu) lu.textContent = "Syncing...";
 
   Papa.parse(SHEET_CSV_URL, {
     download: true,
@@ -91,7 +90,7 @@ app.fetchData = () => {
         return;
       }
       app.processData(results.data, results.meta.fields);
-      document.getElementById("lastUpdated").textContent = "Live: " + new Date().toLocaleTimeString();
+      if (lu) lu.textContent = "Live: " + new Date().toLocaleTimeString();
     },
     error: (err) => app.showError("Network Error: " + err.message),
   });
@@ -108,7 +107,6 @@ app.processData = (data, headers) => {
   const columnMap = {};
   const cleanHeaders = headers.map((h) => (h || "").toLowerCase().trim());
 
-  // Prefer exact match first, then includes
   for (const [key, variants] of Object.entries(app.keyMap)) {
     let idx = cleanHeaders.findIndex((h) => variants.some((v) => h === v));
     if (idx === -1) idx = cleanHeaders.findIndex((h) => variants.some((v) => h.includes(v)));
@@ -206,12 +204,6 @@ app.updateDashboard = () => {
 
   const safeDiv = (n, d) => (d > 0 ? n / d : 0);
 
-  // ✅ Close Rate uses Qualified Calls now
-  const closeRate = safeDiv(totals.deals, totals.qualifiedCalls);
-
-  // ✅ CPA shown explicitly (Spend / Deals Closed)
-  const cpa = safeDiv(totals.spend, totals.deals);
-
   app.aggregates = {
     totals,
     ctr: safeDiv(totals.clicks, totals.impressions),
@@ -225,11 +217,11 @@ app.updateDashboard = () => {
     // Show-ups → Qualified Calls
     qualCallRate: safeDiv(totals.qualifiedCalls, totals.showUps),
 
-    // ✅ FIXED
-    closeRate,
+    // ✅ Close Rate (Qualified Calls → Deals)
+    closeRate: safeDiv(totals.deals, totals.qualifiedCalls),
 
-    // ✅ NEW / Visible
-    cpa,
+    // ✅ Cost per Acquisition (Spend / Deals)
+    cpa: safeDiv(totals.spend, totals.deals),
 
     mer: safeDiv(totals.revenue, totals.spend),
     roas: safeDiv(totals.cashIn, totals.spend),
@@ -240,37 +232,62 @@ app.updateDashboard = () => {
   app.renderCharts();
   app.renderBenchmarks();
   app.renderTable();
+
+  // ✅ Focus Area: list all Fair/Risky items (after benchmarks computed)
+  app.renderFocusArea();
 };
 
 app.renderKPICards = () => {
   const ag = app.aggregates;
-
-  // ✅ Added CPA card
-  const kpis = [
-    { title: "Ad Spend", val: app.currencyFormatter.format(ag.totals.spend) },
-    { title: "Revenue", val: app.currencyFormatter.format(ag.totals.revenue) },
-    { title: "Cash Col.", val: app.currencyFormatter.format(ag.totals.cashIn) },
-    { title: "Qualified Calls", val: app.numberFormatter.format(ag.totals.qualifiedCalls) },
-    { title: "Deals", val: app.numberFormatter.format(ag.totals.deals) },
-    { title: "CPA", val: app.currencyFormatter.format(ag.cpa), status: app.getBenchmark("cpa", ag.cpa) },
-    { title: "MER", val: ag.mer.toFixed(2) + "x", status: app.getBenchmark("mer", ag.mer) },
-  ];
-
   const container = document.getElementById("kpiContainer");
   if (!container) return;
 
-  // Keep layout compact (if your grid is md:grid-cols-6, this will just wrap nicely)
-  container.innerHTML = kpis
-    .map(
-      (k) => `
-      <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center relative overflow-hidden group hover:border-tmt-300 transition">
-          ${k.status ? `<div class="absolute right-0 top-0 w-1 h-full ${k.status.bgClass}"></div>` : ""}
-          <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">${k.title}</div>
-          <div class="text-sm font-bold text-slate-800 truncate leading-none">${k.val}</div>
-      </div>
-    `
-    )
-    .join("");
+  // ✅ CPA special card: bigger + centered on desktop
+  // On md:grid-cols-6, start at 3 and span 2 => centered lane feel
+  const cpaStatus = app.getBenchmark("cpa", ag.cpa);
+
+  const cardsHtml = `
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Ad Spend</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.spend)}</div>
+    </div>
+
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Revenue (Booked)</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.revenue)}</div>
+    </div>
+
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Cash Collected</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.cashIn)}</div>
+    </div>
+
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Qualified Calls</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.numberFormatter.format(ag.totals.qualifiedCalls)}</div>
+    </div>
+
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Deals Closed</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.numberFormatter.format(ag.totals.deals)}</div>
+    </div>
+
+    <!-- ✅ Bigger centered CPA -->
+    <div class="bg-white rounded border border-tmt-100 p-3 shadow-sm flex flex-col justify-center text-center relative overflow-hidden hover:border-tmt-300 transition
+                col-span-2 md:col-span-2 md:col-start-3 h-16">
+      ${cpaStatus ? `<div class="absolute right-0 top-0 w-1 h-full ${cpaStatus.bgClass}"></div>` : ""}
+      <div class="text-[10px] font-bold text-tmt-600 uppercase tracking-wider mb-1">Cost per Acquisition (CPA)</div>
+      <div class="text-xl font-extrabold text-slate-900 leading-none">${app.currencyFormatter.format(ag.cpa)}</div>
+      ${cpaStatus ? `<div class="mt-1 text-[10px] font-bold ${cpaStatus.textClass}">${cpaStatus.label}</div>` : ""}
+    </div>
+
+    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center relative overflow-hidden hover:border-tmt-300 transition">
+      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Marketing Efficiency Ratio (MER)</div>
+      <div class="text-sm font-bold text-slate-800 truncate leading-none">${ag.mer.toFixed(2)}x</div>
+    </div>
+  `;
+
+  container.innerHTML = cardsHtml;
 };
 
 app.renderFunnel = () => {
@@ -292,13 +309,11 @@ app.renderFunnel = () => {
       count: ag.totals.qualifiedCalls,
       conv: safeDiv(ag.totals.qualifiedCalls, ag.totals.showUps),
     },
-
-    // ✅ Connector shown here will be Close Rate = Deals / Qualified Calls
     {
       name: "Deals Closed",
       icon: "fa-handshake",
       count: ag.totals.deals,
-      conv: safeDiv(ag.totals.deals, ag.totals.qualifiedCalls),
+      conv: safeDiv(ag.totals.deals, ag.totals.qualifiedCalls), // ✅ close rate
     },
   ];
 
@@ -330,49 +345,6 @@ app.renderFunnel = () => {
   });
 
   container.innerHTML = html;
-
-  // Bottleneck focus (include qualified + close)
-  const metrics = [
-    { key: "ctr", name: "CTR", val: ag.ctr },
-    { key: "lcr", name: "Lead Conv", val: ag.lcr },
-    { key: "showRate", name: "Show Rate", val: ag.showRate },
-    { key: "qualCallRate", name: "Qualified Call Rate", val: ag.qualCallRate },
-    { key: "closeRate", name: "Close Rate", val: ag.closeRate },
-  ];
-
-  let worst = null;
-  let minScore = 4;
-
-  metrics.forEach((m) => {
-    const s = app.getBenchmark(m.key, m.val);
-    if (s && s.score < minScore) {
-      minScore = s.score;
-      worst = { ...m, status: s };
-    }
-  });
-
-  const bStage = document.getElementById("bottleneckStage");
-  const bRec = document.getElementById("bottleneckRec");
-
-  if (bStage && bRec) {
-    if (worst) {
-      bStage.textContent = `${worst.name} (${(worst.val * 100).toFixed(1)}%)`;
-      bStage.className = `text-[11px] font-bold ${worst.status.textClass}`;
-
-      const recs = {
-        ctr: "Test new hooks / creatives.",
-        lcr: "Improve landing page or offer.",
-        showRate: "Improve follow-up + confirmations.",
-        qualCallRate: "Tighten qualification + call handling.",
-        closeRate: "Increase sales skill + offer fit.",
-      };
-
-      bRec.textContent = recs[worst.key] || "Optimize the bottleneck.";
-    } else {
-      bStage.textContent = "Healthy";
-      bRec.textContent = "Scale spend carefully.";
-    }
-  }
 };
 
 app.setChartMode = (mode) => {
@@ -420,6 +392,7 @@ app.renderCharts = () => {
   if (app.chartInstance) app.chartInstance.destroy();
 
   const grouped = new Map();
+  const safeDiv = (n, d) => (d > 0 ? n / d : 0);
 
   app.filteredData.forEach((d) => {
     let key;
@@ -441,7 +414,6 @@ app.renderCharts = () => {
   });
 
   const labels = Array.from(grouped.keys());
-  const safeDiv = (n, d) => (d > 0 ? n / d : 0);
 
   const data = Array.from(grouped.values()).map((g) => {
     switch (app.currentChartMetric) {
@@ -509,23 +481,15 @@ app.getBenchmark = (metric, value) => {
       return value <= 150 ? EX : value <= 300 ? GD : value <= 600 ? OK : BD;
     case "showRate":
       return value >= 0.7 ? EX : value >= 0.6 ? GD : value >= 0.5 ? OK : BD;
-
-    // Qualified Call Rate (Show-Ups → Qualified Calls)
     case "qualCallRate":
       return value >= 0.2 ? EX : value >= 0.1 ? GD : value >= 0.05 ? OK : BD;
-
-    // ✅ Close Rate (Qualified Calls → Deals Closed)
     case "closeRate":
       return value >= 0.35 ? EX : value >= 0.25 ? GD : value >= 0.15 ? OK : BD;
-
     case "mer":
       return value >= 4 ? EX : value >= 3 ? GD : value >= 2 ? OK : BD;
-
-    // ✅ CPA Benchmarks in PHP
     case "cpa":
-      // You can adjust these if you want
+      // Adjustable CPA thresholds
       return value <= 3000 ? EX : value <= 5000 ? GD : value <= 8000 ? OK : BD;
-
     default:
       return null;
   }
@@ -535,21 +499,18 @@ app.renderBenchmarks = () => {
   const ag = app.aggregates;
 
   const items = [
-    { name: "CTR", val: ag.ctr, fmt: app.percentFormatter, k: "ctr" },
-    { name: "CPC", val: ag.cpc, fmt: app.currencyFormatter, k: "cpc" },
-    { name: "Lead Conv", val: ag.lcr, fmt: app.percentFormatter, k: "lcr" },
-    { name: "CPL", val: ag.cpl, fmt: app.currencyFormatter, k: "cpl" },
-    { name: "Show Rate", val: ag.showRate, fmt: app.percentFormatter, k: "showRate" },
-    { name: "Qualified Call Rate", val: ag.qualCallRate, fmt: app.percentFormatter, k: "qualCallRate" },
-
-    // ✅ Fixed close rate benchmark
-    { name: "Close Rate", val: ag.closeRate, fmt: app.percentFormatter, k: "closeRate" },
-
-    // ✅ Added CPA benchmark row
-    { name: "CPA", val: ag.cpa, fmt: app.currencyFormatter, k: "cpa" },
-
-    { name: "MER", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
+    { name: "Click-Through Rate (CTR)", val: ag.ctr, fmt: app.percentFormatter, k: "ctr" },
+    { name: "Cost per Click (CPC)", val: ag.cpc, fmt: app.currencyFormatter, k: "cpc" },
+    { name: "Lead Conversion Rate (Clicks → Lead)", val: ag.lcr, fmt: app.percentFormatter, k: "lcr" },
+    { name: "Cost per Lead (CPL)", val: ag.cpl, fmt: app.currencyFormatter, k: "cpl" },
+    { name: "Show-Up Rate (Booked → Show-Ups)", val: ag.showRate, fmt: app.percentFormatter, k: "showRate" },
+    { name: "Qualified Call Rate (Show-Ups → Qualified Calls)", val: ag.qualCallRate, fmt: app.percentFormatter, k: "qualCallRate" },
+    { name: "Close Rate (Qualified Calls → Deals Closed)", val: ag.closeRate, fmt: app.percentFormatter, k: "closeRate" },
+    { name: "Cost per Acquisition (CPA)", val: ag.cpa, fmt: app.currencyFormatter, k: "cpa" },
+    { name: "Marketing Efficiency Ratio (MER)", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
   ];
+
+  app._benchmarkItems = items; // store for Focus Area use
 
   const tbody = document.getElementById("benchmarkBody");
   if (!tbody) return;
@@ -565,6 +526,44 @@ app.renderBenchmarks = () => {
       </tr>`;
     })
     .join("");
+};
+
+app.renderFocusArea = () => {
+  const stageEl = document.getElementById("bottleneckStage");
+  const recEl = document.getElementById("bottleneckRec");
+  if (!stageEl || !recEl) return;
+
+  const items = app._benchmarkItems || [];
+  const flagged = items
+    .map((i) => ({ ...i, status: app.getBenchmark(i.k, i.val) }))
+    .filter((x) => x.status && x.status.score <= 1); // Fair or Risky
+
+  if (!flagged.length) {
+    stageEl.textContent = "Healthy Funnel";
+    stageEl.className = "text-[11px] font-bold text-tmt-700";
+    recEl.textContent = "No Fair/Risky metrics detected. You can scale with control.";
+    return;
+  }
+
+  const riskyCount = flagged.filter((f) => f.status.score === 0).length;
+  const fairCount = flagged.filter((f) => f.status.score === 1).length;
+
+  stageEl.textContent = `Needs Attention: ${riskyCount} Risky • ${fairCount} Fair`;
+  stageEl.className = "text-[11px] font-bold text-amber-600";
+
+  // Build a compact list line
+  const lines = flagged.map((f) => {
+    const v =
+      f.k === "cpc" || f.k === "cpl" || f.k === "cpa"
+        ? app.currencyFormatter.format(f.val)
+        : f.k === "mer"
+        ? f.val.toFixed(2) + "x"
+        : (f.val * 100).toFixed(1) + "%";
+
+    return `${f.name}: ${f.status.label} (${v})`;
+  });
+
+  recEl.textContent = lines.join(" • ");
 };
 
 app.renderTable = () => {
