@@ -1,7 +1,7 @@
 /* ===============================
    CONFIG
 ================================ */
-const CSV_URL = https://docs.google.com/spreadsheets/d/1lfnCFap50QQ1L3hRB-b9I3kUokHrOIB6kcu7VIx2jx0/edit?usp=sharing; // <-- replace with your link
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQodpSGaQTvWB7i7sUMZ-5lS17ILsch4R4OxKofe22s8gKNXt_BCvHiQ6Ddvg0LD14F1KgWlmkh0kri/pub?output=csv";
 
 /* ===============================
    GLOBAL STATE
@@ -823,3 +823,4 @@ document.addEventListener("DOMContentLoaded", async () => {
   await initLoad();
   setInterval(setLastUpdated, 1000);
 });
+
