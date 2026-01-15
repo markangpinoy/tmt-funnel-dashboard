@@ -1,1 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TMT Funnel Tracker</title>
+
+  <!-- External Libraries -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+
+  <!-- Tailwind Config for Premium Green Theme -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            tmt: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              200: '#bbf7d0',
+              300: '#86efac',
+              400: '#4ade80',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+              800: '#166534',
+              900: '#14532d',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Your extracted CSS -->
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Your extracted JS -->
+  <script src="script.js" defer></script>
+</head>
+
+<body class="text-slate-800 antialiased font-sans h-screen flex flex-col overflow-hidden bg-tmt-50">
+
+  <!-- Compact Navbar -->
+  <nav class="bg-tmt-900 text-white shadow-sm z-50 flex-none h-12">
+    <div class="w-full px-4 h-full flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <i class="fa-solid fa-filter-circle-dollar text-tmt-400 text-base"></i>
+        <span class="font-bold text-base tracking-wide">TMT Funnel Tracker</span>
+      </div>
+
+      <!-- Filters -->
+      <div class="hidden md:flex items-center gap-2">
+        <div class="flex items-center bg-tmt-800 rounded px-2 py-0.5">
+          <input type="date" id="startDate" class="bg-transparent text-[10px] text-white border-none focus:ring-0 p-0 w-20">
+          <span class="text-tmt-400 mx-1 text-[10px]">to</span>
+          <input type="date" id="endDate" class="bg-transparent text-[10px] text-white border-none focus:ring-0 p-0 w-20">
+        </div>
+        <select id="channelFilter" class="bg-tmt-800 text-white text-[10px] border-none rounded px-2 py-1 focus:ring-0 cursor-pointer h-6">
+          <option value="All">All Channels</option>
+        </select>
+        <button onclick="app.fetchData()" class="bg-tmt-600 hover:bg-tmt-500 text-white text-[10px] px-2 py-1 rounded transition shadow-sm h-6 flex items-center">
+          <i class="fa-solid fa-sync mr-1"></i> Sync
+        </button>
+      </div>
+
+      <div class="text-[10px] text-tmt-300 hidden sm:block" id="lastUpdated">Loading...</div>
+    </div>
+  </nav>
+
+  <!-- Mobile Filter Fallback -->
+  <div class="md:hidden bg-white p-2 border-b border-tmt-100 flex flex-wrap gap-2 justify-between items-center">
+    <input type="date" id="startDateMobile" class="border border-tmt-200 rounded px-1 py-1 text-xs">
+    <input type="date" id="endDateMobile" class="border border-tmt-200 rounded px-1 py-1 text-xs">
+    <button onclick="app.fetchData()" class="bg-tmt-600 text-white text-xs px-2 py-1 rounded">Update</button>
+  </div>
+
+  <!-- Main Content (Scrollable Area) -->
+  <main class="flex-1 overflow-y-auto p-3">
+    <div class="max-w-[98%] mx-auto space-y-3">
+
+      <!-- Error Container -->
+      <div id="errorContainer" class="hidden bg-red-50 border-l-4 border-red-500 p-2 rounded shadow-sm text-xs"></div>
+
+      <!-- ROW 1: Ultra Compact KPIs -->
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-2" id="kpiContainer">
+        <div class="col-span-full flex justify-center py-2"><div class="loader"></div></div>
+      </div>
+
+      <!-- ROW 2: VISUALS (50/50 Split) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 h-auto">
+
+        <!-- Funnel (50%) -->
+        <div class="bg-white rounded-lg card-shadow p-3 flex flex-col h-[350px]">
+          <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide mb-2 flex justify-between items-center border-b border-tmt-100 pb-2">
+            <span><i class="fa-solid fa-arrow-down-wide-short mr-2 text-tmt-600"></i>Live Funnel Flow</span>
+            <span class="text-[9px] bg-tmt-50 text-tmt-600 px-2 py-0.5 rounded border border-tmt-100">Volume & Rates</span>
+          </h3>
+          <div class="funnel-container flex-1 justify-center" id="funnelContainer"></div>
+        </div>
+
+        <!-- Trends (50%) -->
+        <div class="bg-white rounded-lg card-shadow p-3 flex flex-col h-[350px]">
+          <div class="flex justify-between items-center mb-2">
+            <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide">
+              <i class="fa-solid fa-chart-line mr-1 text-tmt-600"></i>Trends
+            </h3>
+            <div class="flex gap-2 items-center">
+              <div class="flex gap-1 overflow-x-auto no-scrollbar">
+                <button onclick="app.updateChartMetric('ctr')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="ctr">CTR</button>
+                <button onclick="app.updateChartMetric('cpc')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="cpc">CPC</button>
+                <button onclick="app.updateChartMetric('cpl')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="cpl">CPL</button>
+                <button onclick="app.updateChartMetric('mer')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="mer">MER</button>
+              </div>
+
+              <div class="flex bg-tmt-50 rounded p-0.5 border border-tmt-100">
+                <button onclick="app.setChartMode('daily')" id="btnDaily" class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700">Day</button>
+                <button onclick="app.setChartMode('weekly')" id="btnWeekly" class="px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700">Wk</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="relative w-full flex-1 min-h-[200px]">
+            <canvas id="trendChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- ROW 3: DATA & BENCHMARKS (33% / 66%) -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+        <!-- Benchmarks & Diagnostics (33%) -->
+        <div class="lg:col-span-1 flex flex-col gap-2 h-full">
+
+          <div class="bg-white rounded-lg card-shadow p-3 border-l-4 border-amber-400 flex items-center gap-3">
+            <div class="text-amber-500 text-xl pl-1"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            <div class="flex-1 leading-tight">
+              <div class="flex justify-between">
+                <span class="text-[10px] font-bold text-amber-600 uppercase">Focus Area</span>
+                <span id="bottleneckStage" class="text-[11px] font-bold text-slate-700">Analyzing...</span>
+              </div>
+              <p id="bottleneckRec" class="text-[11px] text-slate-500 italic truncate mt-1">Loading data...</p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-lg card-shadow p-3 flex-1 min-h-[220px]">
+            <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide mb-3 flex items-center">
+              <i class="fa-solid fa-clipboard-check mr-2 text-tmt-600"></i>Benchmarks
+            </h3>
+            <div class="overflow-x-auto h-full">
+              <table class="w-full text-[10px] text-left">
+                <thead class="bg-tmt-50 text-tmt-600 font-bold border-b border-tmt-100">
+                  <tr>
+                    <th class="px-2 py-1.5">Metric</th>
+                    <th class="px-2 py-1.5 text-right">Val</th>
+                    <th class="px-2 py-1.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="benchmarkBody" class="divide-y divide-slate-50"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dense Data Table (66%) -->
+        <div class="lg:col-span-2 bg-white rounded-lg card-shadow p-3 h-full min-h-[280px] flex flex-col">
+          <div class="flex justify-between items-center mb-2">
+            <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide">Data Log</h3>
+            <input type="text" id="tableSearch" placeholder="Search..." class="border border-tmt-200 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-tmt-500 outline-none w-48 bg-tmt-50">
+          </div>
+          <div class="overflow-x-auto flex-1 border border-tmt-100 rounded scrollbar-thin">
+            <table class="w-full text-[10px] text-left whitespace-nowrap">
+              <thead class="bg-tmt-800 text-white sticky top-0 z-20">
+                <tr id="tableHeader"></tr>
+              </thead>
+              <tbody id="tableBody" class="divide-y divide-tmt-50 bg-white"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+</body>
+</html>
+
 
