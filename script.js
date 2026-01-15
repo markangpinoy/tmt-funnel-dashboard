@@ -1,10 +1,9 @@
 /* ===========================
    TMT Funnel Tracker - script.js (FULL)
-   Fixes:
-   - Qualified now maps ONLY to "Sales Calls (Tagged Qualified)"
-   - Deals maps ONLY to "Deals Closed"
-   - Prevents accidental mapping to "Disqualified Leads"
-   - Adds Qualified into totals + funnel + KPI card
+   Update:
+   - REMOVED "Qualified Leads" concept completely
+   - ADDED "Qualified Calls" (Google Sheet column header: "Qualified Calls")
+   - Funnel now: Impressions → Clicks → Leads → Booked → Show-Ups → Qualified Calls → Deals Closed
    =========================== */
 
 const SHEET_CSV_URL =
@@ -33,32 +32,29 @@ const app = {
     maximumFractionDigits: 0,
   }),
 
-  // IMPORTANT: Make mapping explicit to avoid "qualified" matching "disqualified"
+  // IMPORTANT: We do NOT map anything called "qualified leads" anymore.
+  // We only map "Qualified Calls" exactly to avoid disqualified mixups.
   keyMap: {
     date: ["date", "day"],
     channel: ["channel", "source", "platform"],
     spend: ["ad spend", "spend", "cost", "amount spent"],
     impressions: ["impressions", "views"],
     clicks: ["clicks", "link clicks"],
-
     leads: ["leads", "contacts"],
-
-    // ✅ Exact header-based mapping (your sheet header: "Sales Calls (Tagged Qualified)")
-    qualified: ["sales calls (tagged qualified)"],
-
-    // Keep this for future use / debugging (not shown in UI)
-    disqualified: ["disqualified leads"],
-
-    // In your sheet, "Leads Booked" exists, and "Calls" also exists.
-    // We'll prefer "Leads Booked" if present; otherwise "Calls".
     booked: ["leads booked", "booked calls", "appointments", "calls"],
-
     showUps: ["show-ups", "show ups", "attended"],
-    // ✅ Exact header mapping (your sheet header: "Deals Closed")
+
+    // ✅ EXACT: Google Sheet header is "Qualified Calls"
+    qualifiedCalls: ["qualified calls"],
+
+    // ✅ EXACT: Google Sheet header is "Deals Closed"
     deals: ["deals closed", "deal closed"],
 
     revenue: ["revenue (booked)", "revenue", "sales value"],
     cashIn: ["cash-in (collected)", "cash-in", "cash in", "collected"],
+
+    // Kept only if you want to use later, not displayed:
+    disqualified: ["disqualified leads"],
   },
 };
 
@@ -122,8 +118,7 @@ app.processData = (data, headers) => {
   const columnMap = {};
   const cleanHeaders = headers.map((h) => (h || "").toLowerCase().trim());
 
-  // ---- Improved matching:
-  // Prefer exact match first; fall back to "includes".
+  // Prefer exact match first; fallback to includes.
   for (const [key, variants] of Object.entries(app.keyMap)) {
     let idx = -1;
 
@@ -161,16 +156,17 @@ app.processData = (data, headers) => {
         clicks: safeFloat(row[columnMap.clicks]),
 
         leads: safeFloat(row[columnMap.leads]),
-        qualified: safeFloat(row[columnMap.qualified]),
-
         booked: safeFloat(row[columnMap.booked]),
         showUps: safeFloat(row[columnMap.showUps]),
-        deals: safeFloat(row[columnMap.deals]),
 
+        // ✅ Qualified Calls ONLY
+        qualifiedCalls: safeFloat(row[columnMap.qualifiedCalls]),
+
+        deals: safeFloat(row[columnMap.deals]),
         revenue: safeFloat(row[columnMap.revenue]),
         cashIn: safeFloat(row[columnMap.cashIn]),
 
-        // Not shown, but retained if you want to add later
+        // not displayed
         disqualified: safeFloat(row[columnMap.disqualified]),
 
         original: row,
@@ -217,9 +213,9 @@ app.updateDashboard = () => {
     impressions: 0,
     clicks: 0,
     leads: 0,
-    qualified: 0,
     booked: 0,
     showUps: 0,
+    qualifiedCalls: 0,
     deals: 0,
     revenue: 0,
     cashIn: 0,
@@ -230,14 +226,10 @@ app.updateDashboard = () => {
     totals.impressions += d.impressions;
     totals.clicks += d.clicks;
     totals.leads += d.leads;
-
-    // ✅ Qualified from "Sales Calls (Tagged Qualified)"
-    totals.qualified += d.qualified;
-
     totals.booked += d.booked;
     totals.showUps += d.showUps;
+    totals.qualifiedCalls += d.qualifiedCalls; // ✅
     totals.deals += d.deals;
-
     totals.revenue += d.revenue;
     totals.cashIn += d.cashIn;
   });
@@ -249,20 +241,18 @@ app.updateDashboard = () => {
 
     ctr: safeDiv(totals.clicks, totals.impressions),
     cpc: safeDiv(totals.spend, totals.clicks),
-
     lcr: safeDiv(totals.leads, totals.clicks),
 
-    // ✅ lead -> qualified conversion
-    qualRate: safeDiv(totals.qualified, totals.leads),
-
     cpl: safeDiv(totals.spend, totals.leads),
-
     bookRate: safeDiv(totals.booked, totals.leads),
     cpbc: safeDiv(totals.spend, totals.booked),
 
     showRate: safeDiv(totals.showUps, totals.booked),
-    closeRate: safeDiv(totals.deals, totals.showUps),
 
+    // ✅ Show-ups -> Qualified Calls rate (you can change denominator if you prefer)
+    qualCallRate: safeDiv(totals.qualifiedCalls, totals.showUps),
+
+    closeRate: safeDiv(totals.deals, totals.showUps),
     cpa: safeDiv(totals.spend, totals.deals),
 
     mer: safeDiv(totals.revenue, totals.spend),
@@ -284,11 +274,8 @@ app.renderKPICards = () => {
     { title: "Revenue", val: app.currencyFormatter.format(ag.totals.revenue) },
     { title: "Cash Col.", val: app.currencyFormatter.format(ag.totals.cashIn) },
 
-    // ✅ New: Qualified (from Sales Calls Tagged Qualified)
-    {
-      title: "Qualified",
-      val: app.numberFormatter.format(ag.totals.qualified),
-    },
+    // ✅ Qualified Calls (instead of Qualified Leads)
+    { title: "Qualified Calls", val: app.numberFormatter.format(ag.totals.qualifiedCalls) },
 
     { title: "Deals", val: app.numberFormatter.format(ag.totals.deals) },
 
@@ -326,17 +313,17 @@ app.renderFunnel = () => {
     { name: "Impressions", icon: "fa-eye", count: ag.totals.impressions, conv: null },
     { name: "Clicks", icon: "fa-arrow-pointer", count: ag.totals.clicks, conv: ag.ctr },
     { name: "Leads", icon: "fa-user-check", count: ag.totals.leads, conv: ag.lcr },
-
-    // ✅ Qualified stage uses Sales Calls (Tagged Qualified)
-    {
-      name: "Qualified (Tagged)",
-      icon: "fa-user-shield",
-      count: ag.totals.qualified,
-      conv: safeDiv(ag.totals.qualified, ag.totals.leads),
-    },
-
     { name: "Booked", icon: "fa-phone", count: ag.totals.booked, conv: ag.bookRate },
     { name: "Show-Ups", icon: "fa-video", count: ag.totals.showUps, conv: ag.showRate },
+
+    // ✅ Qualified Calls stage
+    {
+      name: "Qualified Calls",
+      icon: "fa-user-shield",
+      count: ag.totals.qualifiedCalls,
+      conv: safeDiv(ag.totals.qualifiedCalls, ag.totals.showUps),
+    },
+
     { name: "Deals Closed", icon: "fa-handshake", count: ag.totals.deals, conv: ag.closeRate },
   ];
 
@@ -369,11 +356,12 @@ app.renderFunnel = () => {
 
   container.innerHTML = html;
 
-  // Bottleneck
+  // Bottleneck focus
   const metrics = [
     { key: "ctr", name: "CTR", val: ag.ctr },
     { key: "lcr", name: "Lead Conv", val: ag.lcr },
     { key: "showRate", name: "Show Rate", val: ag.showRate },
+    { key: "qualCallRate", name: "Qualified Call Rate", val: ag.qualCallRate },
     { key: "closeRate", name: "Close Rate", val: ag.closeRate },
   ];
 
@@ -395,12 +383,15 @@ app.renderFunnel = () => {
     if (worst) {
       bStage.textContent = `${worst.name} (${(worst.val * 100).toFixed(1)}%)`;
       bStage.className = `text-[11px] font-bold ${worst.status.textClass}`;
+
       const recs = {
         ctr: "Test new hooks / creatives.",
         lcr: "Improve landing page or offer.",
         showRate: "Improve follow-up + confirmations.",
-        closeRate: "Sales coaching / qualify better.",
+        qualCallRate: "Tighten qualification + call handling.",
+        closeRate: "Sales coaching / refine offer fit.",
       };
+
       bRec.textContent = recs[worst.key] || "Optimize the bottleneck.";
     } else {
       bStage.textContent = "Healthy";
@@ -519,15 +510,8 @@ app.renderCharts = () => {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: {
-          beginAtZero: true,
-          grid: { color: "#f0fdf4" },
-          ticks: { font: { size: 9 } },
-        },
-        x: {
-          grid: { display: false },
-          ticks: { maxTicksLimit: 8, font: { size: 9 } },
-        },
+        y: { beginAtZero: true, grid: { color: "#f0fdf4" }, ticks: { font: { size: 9 } } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 9 } } },
       },
     },
   });
@@ -551,6 +535,11 @@ app.getBenchmark = (metric, value) => {
       return value <= 150 ? EX : value <= 300 ? GD : value <= 600 ? OK : BD;
     case "showRate":
       return value >= 0.7 ? EX : value >= 0.6 ? GD : value >= 0.5 ? OK : BD;
+
+    // ✅ Practical benchmark for Qualified Call Rate (Show-ups → Qualified Calls)
+    case "qualCallRate":
+      return value >= 0.2 ? EX : value >= 0.1 ? GD : value >= 0.05 ? OK : BD;
+
     case "closeRate":
       return value >= 0.25 ? EX : value >= 0.15 ? GD : value >= 0.1 ? OK : BD;
     case "mer":
@@ -569,6 +558,10 @@ app.renderBenchmarks = () => {
     { name: "Lead Conv", val: ag.lcr, fmt: app.percentFormatter, k: "lcr" },
     { name: "CPL", val: ag.cpl, fmt: app.currencyFormatter, k: "cpl" },
     { name: "Show Rate", val: ag.showRate, fmt: app.percentFormatter, k: "showRate" },
+
+    // ✅ New: Qualified Call Rate
+    { name: "Qualified Call Rate", val: ag.qualCallRate, fmt: app.percentFormatter, k: "qualCallRate" },
+
     { name: "Close Rate", val: ag.closeRate, fmt: app.percentFormatter, k: "closeRate" },
     { name: "MER", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
   ];
@@ -590,7 +583,7 @@ app.renderBenchmarks = () => {
 };
 
 app.renderTable = () => {
-  const cols = ["Date", "Chan", "Spend", "Click", "Lead", "Qualified", "Book", "Deal", "Rev"];
+  const cols = ["Date", "Chan", "Spend", "Click", "Lead", "Qual Calls", "Book", "Show", "Deals", "Rev"];
 
   const header = document.getElementById("tableHeader");
   const body = document.getElementById("tableBody");
@@ -608,8 +601,9 @@ app.renderTable = () => {
         <td class="px-3 py-1 text-right">${app.currencyFormatter.format(r.spend)}</td>
         <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.clicks)}</td>
         <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.leads)}</td>
-        <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.qualified)}</td>
+        <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.qualifiedCalls)}</td>
         <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.booked)}</td>
+        <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.showUps)}</td>
         <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.deals)}</td>
         <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.currencyFormatter.format(r.revenue)}</td>
       </tr>
