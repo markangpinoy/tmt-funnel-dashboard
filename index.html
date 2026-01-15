@@ -7,12 +7,8 @@
 
   <!-- External Libraries -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
-
-  <!-- Tailwind Config for Premium Green Theme -->
   <script>
+    // Tailwind Config for Premium Green Theme
     tailwind.config = {
       theme: {
         extend: {
@@ -27,21 +23,20 @@
               600: '#16a34a',
               700: '#15803d',
               800: '#166534',
-              900: '#14532d',
+              900: '#14532d'
             }
           },
-          fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-          }
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }
         }
       }
     }
   </script>
 
-  <!-- Your extracted CSS -->
-  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
 
-  <!-- Your extracted JS -->
+  <link rel="stylesheet" href="style.css" />
   <script src="script.js" defer></script>
 </head>
 
@@ -65,7 +60,7 @@
         <select id="channelFilter" class="bg-tmt-800 text-white text-[10px] border-none rounded px-2 py-1 focus:ring-0 cursor-pointer h-6">
           <option value="All">All Channels</option>
         </select>
-        <button onclick="app.fetchData()" class="bg-tmt-600 hover:bg-tmt-500 text-white text-[10px] px-2 py-1 rounded transition shadow-sm h-6 flex items-center">
+        <button id="btnSync" class="bg-tmt-600 hover:bg-tmt-500 text-white text-[10px] px-2 py-1 rounded transition shadow-sm h-6 flex items-center">
           <i class="fa-solid fa-sync mr-1"></i> Sync
         </button>
       </div>
@@ -78,7 +73,7 @@
   <div class="md:hidden bg-white p-2 border-b border-tmt-100 flex flex-wrap gap-2 justify-between items-center">
     <input type="date" id="startDateMobile" class="border border-tmt-200 rounded px-1 py-1 text-xs">
     <input type="date" id="endDateMobile" class="border border-tmt-200 rounded px-1 py-1 text-xs">
-    <button onclick="app.fetchData()" class="bg-tmt-600 text-white text-xs px-2 py-1 rounded">Update</button>
+    <button id="btnSyncMobile" class="bg-tmt-600 text-white text-xs px-2 py-1 rounded">Update</button>
   </div>
 
   <!-- Main Content (Scrollable Area) -->
@@ -93,10 +88,10 @@
         <div class="col-span-full flex justify-center py-2"><div class="loader"></div></div>
       </div>
 
-      <!-- ROW 2: VISUALS (50/50 Split) -->
+      <!-- ROW 2: VISUALS -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 h-auto">
 
-        <!-- Funnel (50%) -->
+        <!-- Funnel -->
         <div class="bg-white rounded-lg card-shadow p-3 flex flex-col h-[350px]">
           <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide mb-2 flex justify-between items-center border-b border-tmt-100 pb-2">
             <span><i class="fa-solid fa-arrow-down-wide-short mr-2 text-tmt-600"></i>Live Funnel Flow</span>
@@ -105,7 +100,7 @@
           <div class="funnel-container flex-1 justify-center" id="funnelContainer"></div>
         </div>
 
-        <!-- Trends (50%) -->
+        <!-- Trends -->
         <div class="bg-white rounded-lg card-shadow p-3 flex flex-col h-[350px]">
           <div class="flex justify-between items-center mb-2">
             <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide">
@@ -113,15 +108,14 @@
             </h3>
             <div class="flex gap-2 items-center">
               <div class="flex gap-1 overflow-x-auto no-scrollbar">
-                <button onclick="app.updateChartMetric('ctr')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="ctr">CTR</button>
-                <button onclick="app.updateChartMetric('cpc')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="cpc">CPC</button>
-                <button onclick="app.updateChartMetric('cpl')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="cpl">CPL</button>
-                <button onclick="app.updateChartMetric('mer')" class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="mer">MER</button>
+                <button class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="ctr">CTR</button>
+                <button class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="cpc">CPC</button>
+                <button class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="cpl">CPL</button>
+                <button class="chart-btn text-[9px] px-2 py-0.5 rounded border border-tmt-200 hover:bg-tmt-50" data-metric="mer">MER</button>
               </div>
-
               <div class="flex bg-tmt-50 rounded p-0.5 border border-tmt-100">
-                <button onclick="app.setChartMode('daily')" id="btnDaily" class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700">Day</button>
-                <button onclick="app.setChartMode('weekly')" id="btnWeekly" class="px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700">Wk</button>
+                <button id="btnDaily" class="px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700">Day</button>
+                <button id="btnWeekly" class="px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700">Wk</button>
               </div>
             </div>
           </div>
@@ -132,10 +126,10 @@
         </div>
       </div>
 
-      <!-- ROW 3: DATA & BENCHMARKS (33% / 66%) -->
+      <!-- ROW 3 -->
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
-        <!-- Benchmarks & Diagnostics (33%) -->
+        <!-- Benchmarks -->
         <div class="lg:col-span-1 flex flex-col gap-2 h-full">
 
           <div class="bg-white rounded-lg card-shadow p-3 border-l-4 border-amber-400 flex items-center gap-3">
@@ -168,11 +162,12 @@
           </div>
         </div>
 
-        <!-- Dense Data Table (66%) -->
+        <!-- Data Table -->
         <div class="lg:col-span-2 bg-white rounded-lg card-shadow p-3 h-full min-h-[280px] flex flex-col">
           <div class="flex justify-between items-center mb-2">
             <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide">Data Log</h3>
-            <input type="text" id="tableSearch" placeholder="Search..." class="border border-tmt-200 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-tmt-500 outline-none w-48 bg-tmt-50">
+            <input type="text" id="tableSearch" placeholder="Search..."
+              class="border border-tmt-200 rounded px-2 py-1 text-[10px] focus:ring-1 focus:ring-tmt-500 outline-none w-48 bg-tmt-50">
           </div>
           <div class="overflow-x-auto flex-1 border border-tmt-100 rounded scrollbar-thin">
             <table class="w-full text-[10px] text-left whitespace-nowrap">
@@ -183,11 +178,9 @@
             </table>
           </div>
         </div>
-
       </div>
+
     </div>
   </main>
 </body>
 </html>
-
-
