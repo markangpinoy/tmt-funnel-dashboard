@@ -237,69 +237,42 @@ app.updateDashboard = () => {
    =========================== */
 app.renderKPICards = () => {
   const ag = app.aggregates;
-  const container = document.getElementById("kpiContainer");
-  if (!container) return;
+
+  const kpiTop = document.getElementById("kpiContainer");
+  const kpiCPA = document.getElementById("kpiCPA");
+  if (!kpiTop || !kpiCPA) return;
 
   const cpaStatus = app.getBenchmark("cpa", ag.cpa);
 
-  // ✅ Row 1: 7 KPIs (if your HTML grid is 6 columns, it will wrap nicely; CPA is still isolated row 2)
-  const row1 = `
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Ad Spend</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.spend)}</div>
-    </div>
-
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Revenue (Booked)</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.revenue)}</div>
-    </div>
-
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Cash Collected</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.currencyFormatter.format(ag.totals.cashIn)}</div>
-    </div>
-
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Qualified Calls</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.numberFormatter.format(ag.totals.qualifiedCalls)}</div>
-    </div>
-
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Deals Closed</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${app.numberFormatter.format(ag.totals.deals)}</div>
-    </div>
-
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Return on Ad Spend (ROAS)</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${ag.roas.toFixed(2)}x</div>
-    </div>
-
-    <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center hover:border-tmt-300 transition">
-      <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">Marketing Efficiency Ratio (MER)</div>
-      <div class="text-sm font-bold text-slate-800 truncate leading-none">${ag.mer.toFixed(2)}x</div>
-    </div>
+  kpiTop.innerHTML = `
+    ${kpiCard("Ad Spend", app.currencyFormatter.format(ag.totals.spend))}
+    ${kpiCard("Revenue (Booked)", app.currencyFormatter.format(ag.totals.revenue))}
+    ${kpiCard("Cash Collected", app.currencyFormatter.format(ag.totals.cashIn))}
+    ${kpiCard("Qualified Calls", app.numberFormatter.format(ag.totals.qualifiedCalls))}
+    ${kpiCard("Deals Closed", app.numberFormatter.format(ag.totals.deals))}
+    ${kpiCard("Return on Ad Spend (ROAS)", `${ag.roas.toFixed(2)}x`)}
+    ${kpiCard("Marketing Efficiency Ratio (MER)", `${ag.mer.toFixed(2)}x`)}
   `;
 
-  // ✅ Row 2: CPA only, big, centered using blanks (desktop)
-  const row2 = `
-    <div class="hidden md:block"></div>
-    <div class="hidden md:block"></div>
-
-    <div class="bg-white rounded border border-tmt-100 p-3 shadow-sm flex flex-col justify-center text-center relative overflow-hidden hover:border-tmt-300 transition
-                col-span-2 h-16">
+  kpiCPA.innerHTML = `
+    <div class="bg-white rounded border border-tmt-100 p-3 shadow-sm text-center relative overflow-hidden"
+         style="width:min(520px, 100%);">
       ${cpaStatus ? `<div class="absolute right-0 top-0 w-1 h-full ${cpaStatus.bgClass}"></div>` : ""}
       <div class="text-[10px] font-bold text-tmt-600 uppercase tracking-wider mb-1">Cost per Acquisition (CPA)</div>
-      <div class="text-xl font-extrabold text-slate-900 leading-none">${app.currencyFormatter.format(ag.cpa)}</div>
+      <div class="text-2xl font-extrabold text-slate-900 leading-none">${app.currencyFormatter.format(ag.cpa)}</div>
       ${cpaStatus ? `<div class="mt-1 text-[10px] font-bold ${cpaStatus.textClass}">${cpaStatus.label}</div>` : ""}
     </div>
-
-    <div class="hidden md:block"></div>
-    <div class="hidden md:block"></div>
   `;
 
-  container.innerHTML = row1 + row2;
+  function kpiCard(label, value) {
+    return `
+      <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center">
+        <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">${label}</div>
+        <div class="text-sm font-bold text-slate-800 truncate leading-none">${value}</div>
+      </div>
+    `;
+  }
 };
-
 app.renderFunnel = () => {
   const ag = app.aggregates;
   const container = document.getElementById("funnelContainer");
@@ -567,3 +540,4 @@ app.filterTable = (q) => {
     r.style.display = r.textContent.toLowerCase().includes(l) ? "" : "none";
   }
 };
+
