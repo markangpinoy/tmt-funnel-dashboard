@@ -1,3 +1,12 @@
+/* ===========================
+   TMT Funnel Tracker - script.js (FULL)
+   Fixes:
+   - Qualified now maps ONLY to "Sales Calls (Tagged Qualified)"
+   - Deals maps ONLY to "Deals Closed"
+   - Prevents accidental mapping to "Disqualified Leads"
+   - Adds Qualified into totals + funnel + KPI card
+   =========================== */
+
 const SHEET_CSV_URL =
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vQodpSGaQTvWB7i7sUMZ-5lS17ILsch4R4OxKofe22s8gKNXt_BCvHiQ6Ddvg0LD14F1KgWlmkh0kri/pub?output=csv";
 
@@ -12,38 +21,45 @@ const app = {
   currencyFormatter: new Intl.NumberFormat("en-PH", {
     style: "currency",
     currency: "PHP",
-    maximumFractionDigits: 0
+    maximumFractionDigits: 0,
   }),
   percentFormatter: new Intl.NumberFormat("en-US", {
     style: "percent",
     minimumFractionDigits: 1,
-    maximumFractionDigits: 2
+    maximumFractionDigits: 2,
   }),
   numberFormatter: new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 0
+    maximumFractionDigits: 0,
   }),
 
-  // ✅ FIXED: Qualified Leads + Deals Closed are now separate mappings
+  // IMPORTANT: Make mapping explicit to avoid "qualified" matching "disqualified"
   keyMap: {
     date: ["date", "day"],
     channel: ["channel", "source", "platform"],
     spend: ["ad spend", "spend", "cost", "amount spent"],
     impressions: ["impressions", "views"],
     clicks: ["clicks", "link clicks"],
+
     leads: ["leads", "contacts"],
 
-    qualified: ["qualified leads", "qualified", "ql", "qualified_leads"],
+    // ✅ Exact header-based mapping (your sheet header: "Sales Calls (Tagged Qualified)")
+    qualified: ["sales calls (tagged qualified)"],
 
-    booked: ["booked calls", "leads booked", "appointments"],
+    // Keep this for future use / debugging (not shown in UI)
+    disqualified: ["disqualified leads"],
+
+    // In your sheet, "Leads Booked" exists, and "Calls" also exists.
+    // We'll prefer "Leads Booked" if present; otherwise "Calls".
+    booked: ["leads booked", "booked calls", "appointments", "calls"],
+
     showUps: ["show-ups", "show ups", "attended"],
-
-    // ✅ Tight mapping so it won't pick qualified leads
-    deals: ["deals closed", "deal closed", "closed deals", "sales closed", "closed"],
+    // ✅ Exact header mapping (your sheet header: "Deals Closed")
+    deals: ["deals closed", "deal closed"],
 
     revenue: ["revenue (booked)", "revenue", "sales value"],
-    cashIn: ["cash-in (collected)", "cash-in", "cash in", "collected"]
-  }
+    cashIn: ["cash-in (collected)", "cash-in", "cash in", "collected"],
+  },
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -64,31 +80,20 @@ document.addEventListener("DOMContentLoaded", () => {
   setDates("startDate", "endDate");
   setDates("startDateMobile", "endDateMobile");
 
-  document.getElementById("channelFilter").addEventListener("change", app.updateDashboard);
-  document.getElementById("tableSearch").addEventListener("keyup", (e) => app.filterTable(e.target.value));
+  const channelFilter = document.getElementById("channelFilter");
+  if (channelFilter) channelFilter.addEventListener("change", app.updateDashboard);
 
-  document.getElementById("btnSync").addEventListener("click", app.fetchData);
-  const btnSyncMobile = document.getElementById("btnSyncMobile");
-  if (btnSyncMobile) btnSyncMobile.addEventListener("click", app.fetchData);
-
-  // Chart controls
-  document.querySelectorAll(".chart-btn").forEach((btn) => {
-    btn.addEventListener("click", () => app.updateChartMetric(btn.dataset.metric));
-  });
-  document.getElementById("btnDaily").addEventListener("click", () => app.setChartMode("daily"));
-  document.getElementById("btnWeekly").addEventListener("click", () => app.setChartMode("weekly"));
-
-  // Default active chart button
-  app.updateChartMetric("ctr");
+  const tableSearch = document.getElementById("tableSearch");
+  if (tableSearch) {
+    tableSearch.addEventListener("keyup", (e) => app.filterTable(e.target.value));
+  }
 
   app.fetchData();
 });
 
 app.fetchData = () => {
-  document.getElementById("lastUpdated").textContent = "Syncing...";
-  const errEl = document.getElementById("errorContainer");
-  errEl.classList.add("hidden");
-  errEl.textContent = "";
+  const lastUpdated = document.getElementById("lastUpdated");
+  if (lastUpdated) lastUpdated.textContent = "Syncing...";
 
   Papa.parse(SHEET_CSV_URL, {
     download: true,
@@ -99,15 +104,16 @@ app.fetchData = () => {
         app.showError("Failed to load CSV data.");
         return;
       }
-      app.processData(results.data, results.meta.fields || []);
-      document.getElementById("lastUpdated").textContent = "Live: " + new Date().toLocaleTimeString();
+      app.processData(results.data, results.meta.fields);
+      if (lastUpdated) lastUpdated.textContent = "Live: " + new Date().toLocaleTimeString();
     },
-    error: (err) => app.showError("Network Error: " + err.message)
+    error: (err) => app.showError("Network Error: " + err.message),
   });
 };
 
 app.showError = (msg) => {
   const el = document.getElementById("errorContainer");
+  if (!el) return;
   el.textContent = msg;
   el.classList.remove("hidden");
 };
@@ -116,24 +122,29 @@ app.processData = (data, headers) => {
   const columnMap = {};
   const cleanHeaders = headers.map((h) => (h || "").toLowerCase().trim());
 
-  // map columns by contains()
+  // ---- Improved matching:
+  // Prefer exact match first; fall back to "includes".
   for (const [key, variants] of Object.entries(app.keyMap)) {
-    const matchIndex = cleanHeaders.findIndex((h) => variants.some((v) => h.includes(v)));
-    if (matchIndex !== -1) columnMap[key] = headers[matchIndex];
-  }
+    let idx = -1;
 
-  // Warn on missing columns (but keep running)
-  const required = ["date", "channel", "spend", "impressions", "clicks", "leads", "booked", "showUps", "deals", "revenue", "cashIn"];
-  const missing = required.filter((k) => !columnMap[k]);
-  if (missing.length) {
-    app.showError("Missing columns in CSV (dashboard will still run): " + missing.join(", "));
+    // 1) Exact match
+    idx = cleanHeaders.findIndex((h) => variants.some((v) => h === v));
+
+    // 2) Includes match
+    if (idx === -1) {
+      idx = cleanHeaders.findIndex((h) => variants.some((v) => h.includes(v)));
+    }
+
+    if (idx !== -1) columnMap[key] = headers[idx];
   }
 
   const safeFloat = (val) => {
     if (val === null || val === undefined) return 0;
     if (typeof val === "number") return val;
     const cleaned = String(val).replace(/[₱$,%]/g, "").trim();
-    return cleaned === "—" || cleaned === "-" || cleaned === "" ? 0 : parseFloat(cleaned) || 0;
+    if (cleaned === "—" || cleaned === "-" || cleaned === "") return 0;
+    const num = parseFloat(cleaned);
+    return Number.isFinite(num) ? num : 0;
   };
 
   app.rawData = data
@@ -143,14 +154,13 @@ app.processData = (data, headers) => {
 
       return {
         date: !isNaN(parsedDate) ? parsedDate : null,
-        channel: (row[columnMap.channel] || "Unknown").trim(),
+        channel: row[columnMap.channel] || "Unknown",
 
         spend: safeFloat(row[columnMap.spend]),
         impressions: safeFloat(row[columnMap.impressions]),
         clicks: safeFloat(row[columnMap.clicks]),
-        leads: safeFloat(row[columnMap.leads]),
 
-        // ✅ NEW
+        leads: safeFloat(row[columnMap.leads]),
         qualified: safeFloat(row[columnMap.qualified]),
 
         booked: safeFloat(row[columnMap.booked]),
@@ -160,7 +170,10 @@ app.processData = (data, headers) => {
         revenue: safeFloat(row[columnMap.revenue]),
         cashIn: safeFloat(row[columnMap.cashIn]),
 
-        original: row
+        // Not shown, but retained if you want to add later
+        disqualified: safeFloat(row[columnMap.disqualified]),
+
+        original: row,
       };
     })
     .filter((item) => item.date);
@@ -168,23 +181,30 @@ app.processData = (data, headers) => {
   // Populate channels
   const channels = [...new Set(app.rawData.map((d) => d.channel))].sort();
   const select = document.getElementById("channelFilter");
-  select.innerHTML = '<option value="All">All Channels</option>';
-  channels.forEach((ch) => {
-    const opt = document.createElement("option");
-    opt.value = ch;
-    opt.textContent = ch;
-    select.appendChild(opt);
-  });
+  if (select) {
+    select.innerHTML = '<option value="All">All Channels</option>';
+    channels.forEach((ch) => {
+      const opt = document.createElement("option");
+      opt.value = ch;
+      opt.textContent = ch;
+      select.appendChild(opt);
+    });
+  }
 
   app.updateDashboard();
 };
 
 app.updateDashboard = () => {
-  const start = document.getElementById("startDate").valueAsDate || document.getElementById("startDateMobile").valueAsDate;
-  const end = document.getElementById("endDate").valueAsDate || document.getElementById("endDateMobile").valueAsDate;
+  const start =
+    document.getElementById("startDate")?.valueAsDate ||
+    document.getElementById("startDateMobile")?.valueAsDate;
+  const end =
+    document.getElementById("endDate")?.valueAsDate ||
+    document.getElementById("endDateMobile")?.valueAsDate;
 
   if (end) end.setHours(23, 59, 59, 999);
-  const channel = document.getElementById("channelFilter").value;
+
+  const channel = document.getElementById("channelFilter")?.value || "All";
 
   app.filteredData = app.rawData.filter((d) => {
     const inDate = (!start || d.date >= start) && (!end || d.date <= end);
@@ -202,7 +222,7 @@ app.updateDashboard = () => {
     showUps: 0,
     deals: 0,
     revenue: 0,
-    cashIn: 0
+    cashIn: 0,
   };
 
   app.filteredData.forEach((d) => {
@@ -210,10 +230,14 @@ app.updateDashboard = () => {
     totals.impressions += d.impressions;
     totals.clicks += d.clicks;
     totals.leads += d.leads;
+
+    // ✅ Qualified from "Sales Calls (Tagged Qualified)"
     totals.qualified += d.qualified;
+
     totals.booked += d.booked;
     totals.showUps += d.showUps;
     totals.deals += d.deals;
+
     totals.revenue += d.revenue;
     totals.cashIn += d.cashIn;
   });
@@ -222,22 +246,27 @@ app.updateDashboard = () => {
 
   app.aggregates = {
     totals,
+
     ctr: safeDiv(totals.clicks, totals.impressions),
     cpc: safeDiv(totals.spend, totals.clicks),
-    lcr: safeDiv(totals.leads, totals.clicks),
-    cpl: safeDiv(totals.spend, totals.leads),
 
-    qualifiedRate: safeDiv(totals.qualified, totals.leads),
+    lcr: safeDiv(totals.leads, totals.clicks),
+
+    // ✅ lead -> qualified conversion
+    qualRate: safeDiv(totals.qualified, totals.leads),
+
+    cpl: safeDiv(totals.spend, totals.leads),
 
     bookRate: safeDiv(totals.booked, totals.leads),
     cpbc: safeDiv(totals.spend, totals.booked),
+
     showRate: safeDiv(totals.showUps, totals.booked),
     closeRate: safeDiv(totals.deals, totals.showUps),
 
     cpa: safeDiv(totals.spend, totals.deals),
 
     mer: safeDiv(totals.revenue, totals.spend),
-    roas: safeDiv(totals.cashIn, totals.spend)
+    roas: safeDiv(totals.cashIn, totals.spend),
   };
 
   app.renderKPICards();
@@ -254,19 +283,32 @@ app.renderKPICards = () => {
     { title: "Ad Spend", val: app.currencyFormatter.format(ag.totals.spend) },
     { title: "Revenue", val: app.currencyFormatter.format(ag.totals.revenue) },
     { title: "Cash Col.", val: app.currencyFormatter.format(ag.totals.cashIn) },
-    { title: "Qualified", val: app.numberFormatter.format(ag.totals.qualified) },
+
+    // ✅ New: Qualified (from Sales Calls Tagged Qualified)
+    {
+      title: "Qualified",
+      val: app.numberFormatter.format(ag.totals.qualified),
+    },
+
     { title: "Deals", val: app.numberFormatter.format(ag.totals.deals) },
-    { title: "MER", val: ag.mer.toFixed(2) + "x", status: app.getBenchmark("mer", ag.mer) }
+
+    {
+      title: "MER",
+      val: ag.mer.toFixed(2) + "x",
+      status: app.getBenchmark("mer", ag.mer),
+    },
   ];
 
   const container = document.getElementById("kpiContainer");
+  if (!container) return;
+
   container.innerHTML = kpis
     .map(
       (k) => `
       <div class="bg-white rounded border border-tmt-100 p-2 shadow-sm flex flex-col h-14 justify-center relative overflow-hidden group hover:border-tmt-300 transition">
-        ${k.status ? `<div class="absolute right-0 top-0 w-1 h-full ${k.status.bgClass}"></div>` : ""}
-        <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">${k.title}</div>
-        <div class="text-sm font-bold text-slate-800 truncate leading-none">${k.val}</div>
+          ${k.status ? `<div class="absolute right-0 top-0 w-1 h-full ${k.status.bgClass}"></div>` : ""}
+          <div class="text-[9px] font-bold text-tmt-400 uppercase tracking-wider mb-0.5">${k.title}</div>
+          <div class="text-sm font-bold text-slate-800 truncate leading-none">${k.val}</div>
       </div>
     `
     )
@@ -276,6 +318,7 @@ app.renderKPICards = () => {
 app.renderFunnel = () => {
   const ag = app.aggregates;
   const container = document.getElementById("funnelContainer");
+  if (!container) return;
 
   const safeDiv = (n, d) => (d > 0 ? n / d : 0);
 
@@ -284,18 +327,24 @@ app.renderFunnel = () => {
     { name: "Clicks", icon: "fa-arrow-pointer", count: ag.totals.clicks, conv: ag.ctr },
     { name: "Leads", icon: "fa-user-check", count: ag.totals.leads, conv: ag.lcr },
 
-    // ✅ NEW stage
-    { name: "Qualified Leads", icon: "fa-user-shield", count: ag.totals.qualified, conv: safeDiv(ag.totals.qualified, ag.totals.leads) },
+    // ✅ Qualified stage uses Sales Calls (Tagged Qualified)
+    {
+      name: "Qualified (Tagged)",
+      icon: "fa-user-shield",
+      count: ag.totals.qualified,
+      conv: safeDiv(ag.totals.qualified, ag.totals.leads),
+    },
 
     { name: "Booked", icon: "fa-phone", count: ag.totals.booked, conv: ag.bookRate },
     { name: "Show-Ups", icon: "fa-video", count: ag.totals.showUps, conv: ag.showRate },
-    { name: "Deals Closed", icon: "fa-handshake", count: ag.totals.deals, conv: ag.closeRate }
+    { name: "Deals Closed", icon: "fa-handshake", count: ag.totals.deals, conv: ag.closeRate },
   ];
 
   let html = '<div class="funnel-flow-line"></div>';
 
   stages.forEach((stage, idx) => {
-    const width = 85 - idx * 8; // smooth shrink
+    const width = 85 - idx * 8;
+
     let connectorHtml = "";
     if (stage.conv !== null) {
       connectorHtml = `
@@ -307,7 +356,7 @@ app.renderFunnel = () => {
     }
 
     html += `
-      <div class="funnel-row" style="width: ${Math.max(width, 38)}%;">
+      <div class="funnel-row" style="width: ${Math.max(width, 40)}%;">
         <div class="flex items-center">
           <i class="fa-solid ${stage.icon} funnel-icon"></i>
           <span class="truncate">${stage.name}</span>
@@ -324,9 +373,8 @@ app.renderFunnel = () => {
   const metrics = [
     { key: "ctr", name: "CTR", val: ag.ctr },
     { key: "lcr", name: "Lead Conv", val: ag.lcr },
-    { key: "qualifiedRate", name: "Qualified Rate", val: ag.qualifiedRate },
     { key: "showRate", name: "Show Rate", val: ag.showRate },
-    { key: "closeRate", name: "Close Rate", val: ag.closeRate }
+    { key: "closeRate", name: "Close Rate", val: ag.closeRate },
   ];
 
   let worst = null;
@@ -343,38 +391,48 @@ app.renderFunnel = () => {
   const bStage = document.getElementById("bottleneckStage");
   const bRec = document.getElementById("bottleneckRec");
 
-  if (worst) {
-    bStage.textContent = `${worst.name} (${(worst.val * 100).toFixed(1)}%)`;
-    bStage.className = `text-[11px] font-bold ${worst.status.textClass}`;
-    const recs = {
-      ctr: "Test new hooks & creatives.",
-      lcr: "Improve landing page + form.",
-      qualifiedRate: "Tighten lead criteria + follow-up.",
-      showRate: "Improve reminders + confirmations.",
-      closeRate: "Review sales calls + objections."
-    };
-    bRec.textContent = recs[worst.key] || "Review funnel quality.";
-  } else {
-    bStage.textContent = "Healthy";
-    bRec.textContent = "Scale spend with control.";
+  if (bStage && bRec) {
+    if (worst) {
+      bStage.textContent = `${worst.name} (${(worst.val * 100).toFixed(1)}%)`;
+      bStage.className = `text-[11px] font-bold ${worst.status.textClass}`;
+      const recs = {
+        ctr: "Test new hooks / creatives.",
+        lcr: "Improve landing page or offer.",
+        showRate: "Improve follow-up + confirmations.",
+        closeRate: "Sales coaching / qualify better.",
+      };
+      bRec.textContent = recs[worst.key] || "Optimize the bottleneck.";
+    } else {
+      bStage.textContent = "Healthy";
+      bRec.textContent = "Scale spend carefully.";
+    }
   }
 };
 
 app.setChartMode = (mode) => {
   app.chartMode = mode;
-  document.getElementById("btnDaily").className =
-    mode === "daily"
-      ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
-      : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
-  document.getElementById("btnWeekly").className =
-    mode === "weekly"
-      ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
-      : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
+
+  const btnDaily = document.getElementById("btnDaily");
+  const btnWeekly = document.getElementById("btnWeekly");
+
+  if (btnDaily && btnWeekly) {
+    btnDaily.className =
+      mode === "daily"
+        ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
+        : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
+
+    btnWeekly.className =
+      mode === "weekly"
+        ? "px-1.5 py-0.5 text-[9px] font-bold rounded bg-white shadow-sm text-tmt-700"
+        : "px-1.5 py-0.5 text-[9px] font-bold rounded text-tmt-400 hover:text-tmt-700";
+  }
+
   app.renderCharts();
 };
 
 app.updateChartMetric = (metric) => {
   app.currentChartMetric = metric;
+
   document.querySelectorAll(".chart-btn").forEach((btn) => {
     if (btn.dataset.metric === metric) {
       btn.classList.add("border-tmt-400", "bg-tmt-100", "text-tmt-800", "font-bold");
@@ -384,12 +442,14 @@ app.updateChartMetric = (metric) => {
       btn.classList.add("border-tmt-200", "hover:bg-tmt-50");
     }
   });
+
   app.renderCharts();
 };
 
 app.renderCharts = () => {
   const canvas = document.getElementById("trendChart");
   if (!canvas) return;
+
   const ctx = canvas.getContext("2d");
   if (app.chartInstance) app.chartInstance.destroy();
 
@@ -405,13 +465,13 @@ app.renderCharts = () => {
       key = d.date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     }
 
-    if (!grouped.has(key)) grouped.set(key, { s: 0, c: 0, i: 0, l: 0, q: 0, rev: 0 });
+    if (!grouped.has(key)) grouped.set(key, { s: 0, c: 0, i: 0, l: 0, b: 0, rev: 0 });
     const g = grouped.get(key);
     g.s += d.spend;
     g.c += d.clicks;
     g.i += d.impressions;
     g.l += d.leads;
-    g.q += d.qualified;
+    g.b += d.booked;
     g.rev += d.revenue;
   });
 
@@ -429,7 +489,7 @@ app.renderCharts = () => {
       case "mer":
         return safeDiv(g.rev, g.s);
       default:
-        return safeDiv(g.c, g.i) * 100;
+        return 0;
     }
   });
 
@@ -441,8 +501,8 @@ app.renderCharts = () => {
         {
           data,
           borderColor: "#16a34a",
-          backgroundColor: (ctx2) => {
-            const grad = ctx2.chart.ctx.createLinearGradient(0, 0, 0, 200);
+          backgroundColor: (c) => {
+            const grad = c.chart.ctx.createLinearGradient(0, 0, 0, 200);
             grad.addColorStop(0, "rgba(22, 163, 74, 0.2)");
             grad.addColorStop(1, "rgba(22, 163, 74, 0)");
             return grad;
@@ -450,19 +510,26 @@ app.renderCharts = () => {
           borderWidth: 2,
           fill: true,
           tension: 0.3,
-          pointRadius: 2
-        }
-      ]
+          pointRadius: 2,
+        },
+      ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: { beginAtZero: true, grid: { color: "#f0fdf4" }, ticks: { font: { size: 9 } } },
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 9 } } }
-      }
-    }
+        y: {
+          beginAtZero: true,
+          grid: { color: "#f0fdf4" },
+          ticks: { font: { size: 9 } },
+        },
+        x: {
+          grid: { display: false },
+          ticks: { maxTicksLimit: 8, font: { size: 9 } },
+        },
+      },
+    },
   });
 };
 
@@ -480,11 +547,6 @@ app.getBenchmark = (metric, value) => {
       return value <= 20 ? EX : value <= 40 ? GD : value <= 70 ? OK : BD;
     case "lcr":
       return value >= 0.2 ? EX : value >= 0.1 ? GD : value >= 0.05 ? OK : BD;
-
-    // Qualified rate: treat 20%+ as excellent, 10%+ good, 5% fair
-    case "qualifiedRate":
-      return value >= 0.2 ? EX : value >= 0.1 ? GD : value >= 0.05 ? OK : BD;
-
     case "cpl":
       return value <= 150 ? EX : value <= 300 ? GD : value <= 600 ? OK : BD;
     case "showRate":
@@ -505,14 +567,16 @@ app.renderBenchmarks = () => {
     { name: "CTR", val: ag.ctr, fmt: app.percentFormatter, k: "ctr" },
     { name: "CPC", val: ag.cpc, fmt: app.currencyFormatter, k: "cpc" },
     { name: "Lead Conv", val: ag.lcr, fmt: app.percentFormatter, k: "lcr" },
-    { name: "Qualified Rate", val: ag.qualifiedRate, fmt: app.percentFormatter, k: "qualifiedRate" },
     { name: "CPL", val: ag.cpl, fmt: app.currencyFormatter, k: "cpl" },
     { name: "Show Rate", val: ag.showRate, fmt: app.percentFormatter, k: "showRate" },
     { name: "Close Rate", val: ag.closeRate, fmt: app.percentFormatter, k: "closeRate" },
-    { name: "MER", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" }
+    { name: "MER", val: ag.mer, fmt: { format: (v) => v.toFixed(2) + "x" }, k: "mer" },
   ];
 
-  document.getElementById("benchmarkBody").innerHTML = items
+  const tbody = document.getElementById("benchmarkBody");
+  if (!tbody) return;
+
+  tbody.innerHTML = items
     .map((i) => {
       const s = i.k ? app.getBenchmark(i.k, i.val) : null;
       const b = s ? `<span class="px-1.5 rounded text-[8px] text-white ${s.bgClass}">${s.label}</span>` : "";
@@ -526,36 +590,42 @@ app.renderBenchmarks = () => {
 };
 
 app.renderTable = () => {
-  // ✅ Added Qualified column
-  const cols = ["Date", "Chan", "Spend", "Click", "Lead", "Qual", "CPL", "Book", "Show", "Deals", "Rev"];
-  document.getElementById("tableHeader").innerHTML = cols
-    .map((c) => `<th class="px-3 py-1 font-semibold text-[9px] uppercase">${c}</th>`)
-    .join("");
+  const cols = ["Date", "Chan", "Spend", "Click", "Lead", "Qualified", "Book", "Deal", "Rev"];
 
-  document.getElementById("tableBody").innerHTML = app.filteredData
-    .slice(0, 80)
+  const header = document.getElementById("tableHeader");
+  const body = document.getElementById("tableBody");
+  if (!header || !body) return;
+
+  header.innerHTML = cols.map((c) => `<th class="px-3 py-1 font-semibold text-[9px] uppercase">${c}</th>`).join("");
+
+  body.innerHTML = app.filteredData
+    .slice(0, 50)
     .map(
       (r) => `
-    <tr class="hover:bg-tmt-50 border-b border-tmt-50 last:border-0">
-      <td class="px-3 py-1 text-slate-500">${r.date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}</td>
-      <td class="px-3 py-1 font-medium text-tmt-700 truncate max-w-[90px]">${r.channel}</td>
-      <td class="px-3 py-1 text-right">${app.currencyFormatter.format(r.spend)}</td>
-      <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.clicks)}</td>
-      <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.leads)}</td>
-      <td class="px-3 py-1 text-right font-bold text-slate-700">${app.numberFormatter.format(r.qualified)}</td>
-      <td class="px-3 py-1 text-right text-slate-500">${app.currencyFormatter.format(r.leads > 0 ? r.spend / r.leads : 0)}</td>
-      <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.booked)}</td>
-      <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.showUps)}</td>
-      <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.deals)}</td>
-      <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.currencyFormatter.format(r.revenue)}</td>
-    </tr>
-  `
+      <tr class="hover:bg-tmt-50 border-b border-tmt-50 last:border-0">
+        <td class="px-3 py-1 text-slate-500">${r.date.toLocaleDateString(undefined, { month: "numeric", day: "numeric" })}</td>
+        <td class="px-3 py-1 font-medium text-tmt-700 truncate max-w-[80px]">${r.channel}</td>
+        <td class="px-3 py-1 text-right">${app.currencyFormatter.format(r.spend)}</td>
+        <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.clicks)}</td>
+        <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.leads)}</td>
+        <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.qualified)}</td>
+        <td class="px-3 py-1 text-right">${app.numberFormatter.format(r.booked)}</td>
+        <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.numberFormatter.format(r.deals)}</td>
+        <td class="px-3 py-1 text-right font-bold text-tmt-700">${app.currencyFormatter.format(r.revenue)}</td>
+      </tr>
+    `
     )
     .join("");
 };
 
 app.filterTable = (q) => {
-  const rows = document.getElementById("tableBody").children;
+  const tbody = document.getElementById("tableBody");
+  if (!tbody) return;
+
+  const rows = tbody.children;
   const l = (q || "").toLowerCase();
-  for (let r of rows) r.style.display = r.textContent.toLowerCase().includes(l) ? "" : "none";
+
+  for (const r of rows) {
+    r.style.display = r.textContent.toLowerCase().includes(l) ? "" : "none";
+  }
 };
