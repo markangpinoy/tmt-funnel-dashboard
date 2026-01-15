@@ -38,12 +38,10 @@
     }
   </script>
 
-  <!-- Your files -->
   <link rel="stylesheet" href="style.css" />
   <script src="script.js" defer></script>
 </head>
 
-<!-- Mobile: allow normal scrolling. Desktop: lock to dashboard view -->
 <body class="text-slate-800 antialiased font-sans bg-tmt-50 overflow-auto md:overflow-hidden md:h-screen">
 
   <!-- Navbar -->
@@ -87,7 +85,7 @@
     </div>
   </div>
 
-  <!-- Mobile Tabs (only visible on mobile) -->
+  <!-- Mobile Tabs -->
   <div class="md:hidden bg-white border-b border-tmt-100 sticky top-[96px] z-30">
     <div class="px-2 py-2 flex gap-2 overflow-x-auto no-scrollbar">
       <button class="tab-btn tab-active" data-tab="tab-kpis">KPIs</button>
@@ -104,9 +102,8 @@
       <!-- Error -->
       <div id="errorContainer" class="hidden bg-red-50 border-l-4 border-red-500 p-2 rounded shadow-sm text-xs"></div>
 
-      <!-- ========= MOBILE TAB: KPIs ========= -->
+      <!-- KPIs -->
       <section id="tab-kpis" class="tab-panel md:block">
-        <!-- KPIs: row 1 (7 items), row 2 (CPA only, centered) -->
         <div class="grid grid-cols-2 md:grid-cols-7 gap-2" id="kpiTopRow">
           <div class="col-span-full flex justify-center py-2"><div class="loader"></div></div>
         </div>
@@ -116,9 +113,8 @@
         </div>
       </section>
 
-      <!-- ========= Desktop block for Funnel+Trends ========= -->
-      <!-- Mobile versions are separate tabs below -->
-      <div class="hidden md:grid grid-cols-1 lg:grid-cols-2 gap-3 h-auto">
+      <!-- Desktop Funnel + Trends -->
+      <div class="hidden md:grid grid-cols-1 lg:grid-cols-2 gap-3">
         <!-- Funnel -->
         <section class="bg-white rounded-lg card-shadow p-3 flex flex-col h-[340px]">
           <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide mb-2 flex justify-between items-center border-b border-tmt-100 pb-2">
@@ -154,7 +150,7 @@
         </section>
       </div>
 
-      <!-- ========= MOBILE TAB: Funnel ========= -->
+      <!-- Mobile Funnel -->
       <section id="tab-funnel" class="tab-panel md:hidden">
         <div class="bg-white rounded-lg card-shadow p-3 flex flex-col">
           <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide mb-2 flex justify-between items-center border-b border-tmt-100 pb-2">
@@ -165,7 +161,7 @@
         </div>
       </section>
 
-      <!-- ========= MOBILE TAB: Trends ========= -->
+      <!-- Mobile Trends -->
       <section id="tab-trends" class="tab-panel md:hidden">
         <div class="bg-white rounded-lg card-shadow p-3 flex flex-col">
           <div class="flex justify-between items-center mb-2">
@@ -194,10 +190,10 @@
         </div>
       </section>
 
-      <!-- ========= Focus + Benchmarks + Table ========= -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 md:overflow-hidden">
+      <!-- Focus + Benchmarks + Data Log -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
-        <!-- Left side: Focus + Benchmarks -->
+        <!-- Bench / Focus -->
         <section id="tab-bench" class="tab-panel md:block lg:col-span-1 flex flex-col gap-2">
           <!-- Focus Area -->
           <div id="focusBox" class="bg-white rounded-lg card-shadow p-3 border-l-4 border-amber-400 flex items-start gap-3">
@@ -232,7 +228,7 @@
           </div>
         </section>
 
-        <!-- Right side: Data Log -->
+        <!-- Data Log -->
         <section id="tab-table" class="tab-panel md:block lg:col-span-2 bg-white rounded-lg card-shadow p-3 flex flex-col">
           <div class="flex flex-wrap gap-2 justify-between items-center mb-2">
             <h3 class="text-xs font-bold text-tmt-800 uppercase tracking-wide">Data Log</h3>
@@ -259,6 +255,7 @@
             </table>
           </div>
         </section>
+
       </div>
 
     </div>
