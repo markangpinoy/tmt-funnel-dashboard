@@ -254,17 +254,20 @@ function kpiBigCPA(value, status) {
 /* =========================
    FUNNEL (Image 2 style)
 ========================= */
+/* =========================
+   FUNNEL (stepped/tapered like your sample)
+========================= */
 function renderFunnel(targetEl, stats, isMobile = false) {
   if (!targetEl) return;
 
   const steps = [
-    { key: "impressions", label: "Impressions", icon: "fa-eye", value: stats.impressions, rate: null },
-    { key: "clicks",      label: "Clicks",      icon: "fa-mouse-pointer", value: stats.clicks, rate: stats.ctr },
-    { key: "leads",       label: "Leads",       icon: "fa-user-plus", value: stats.leads, rate: stats.leadConv },
-    { key: "booked",      label: "Booked",      icon: "fa-phone", value: stats.booked, rate: stats.bookRate },
-    { key: "showUps",     label: "Show-Ups",    icon: "fa-video", value: stats.showUps, rate: stats.showRate },
-    { key: "qualifiedCalls", label: "Qualified Calls", icon: "fa-user-check", value: stats.qualifiedCalls, rate: stats.qualRate },
-    { key: "dealsClosed", label: "Deals Closed", icon: "fa-handshake", value: stats.dealsClosed, rate: stats.closeRate },
+    { key: "impressions",    label: "Impressions",     icon: "fa-eye",            value: stats.impressions,     rate: null },
+    { key: "clicks",         label: "Clicks",          icon: "fa-mouse-pointer",  value: stats.clicks,          rate: stats.ctr },
+    { key: "leads",          label: "Leads",           icon: "fa-user-plus",      value: stats.leads,           rate: stats.leadConv },
+    { key: "booked",         label: "Booked",          icon: "fa-phone",          value: stats.booked,          rate: stats.bookRate },
+    { key: "showUps",        label: "Show-Ups",        icon: "fa-video",          value: stats.showUps,         rate: stats.showRate },
+    { key: "qualifiedCalls", label: "Qualified Calls", icon: "fa-user-check",     value: stats.qualifiedCalls,  rate: stats.qualRate },
+    { key: "dealsClosed",    label: "Deals Closed",    icon: "fa-handshake",      value: stats.dealsClosed,     rate: stats.closeRate },
   ];
 
   const maxVal = Math.max(...steps.map(s => Number(s.value || 0)), 1);
@@ -272,52 +275,36 @@ function renderFunnel(targetEl, stats, isMobile = false) {
   const line = `<div class="funnel-flow-line"></div>`;
 
   const rows = steps.map((s) => {
-    // funnel width: impressions widest, deals narrowest
-    // clamp so it still looks good even if values are tiny
-    const raw = Math.max(0, Math.min(1, (Number(s.value || 0) / maxVal)));
+    const v = Number(s.value || 0);
 
-// make taper more dramatic (power curve)
-// higher exponent = more narrowing
-// max value among the funnel steps
-const maxVal = Math.max(...steps.map(s => Number(s.value || 0)), 1);
+    // taper curve (lower exponent = stronger taper)
+    const raw = Math.max(0, Math.min(1, v / maxVal));
+    const ratio = Math.pow(raw, 0.55);
 
-steps.forEach((s, idx) => {
-  const v = Number(s.value || 0);
+    const maxPct = 96; // top width
+    const minPct = 34; // bottom width
+    const widthPct = minPct + (maxPct - minPct) * ratio;
 
-  // stronger funnel taper
-  const raw = Math.max(0, Math.min(1, v / maxVal));
-  const ratio = Math.pow(raw, 0.55);     // lower = more taper (try 0.45 if you want more)
-  const maxPct = 96;                     // top width
-  const minPct = 34;                     // bottom width
-  const widthPct = minPct + (maxPct - minPct) * ratio;
+    // Rate chip:
+    // - Desktop: can stay as your floating "connector"
+    // - Mobile: put it INSIDE row so it never gets clipped
+    const rateHTML =
+      (s.rate === null)
+        ? ""
+        : isMobile
+          ? `<span class="funnel-rate-pill"><i class="fa-solid fa-arrow-trend-up"></i> ${pct1(s.rate)}</span>`
+          : `<span class="funnel-connector"><i class="fa-solid fa-arrow-trend-up"></i> ${pct1(s.rate)}</span>`;
 
-  const row = document.createElement("div");
-  row.className = "funnel-row";
-
-  // IMPORTANT: this creates the stepped/centered funnel look
-  row.style.width = `${widthPct}%`;
-  row.style.marginLeft = "auto";
-  row.style.marginRight = "auto";
-
-  // ... keep the rest of your row HTML building here ...
-});
-
-    const rateChip = (s.rate === null)
-      ? ""
-      : `<span class="funnel-connector"><i class="fa-solid fa-arrow-trend-up"></i> ${pct1(s.rate)}</span>`;
-
-    // Desktop: keep the chip floating outside (your existing style)
-    // Mobile: chip sits inside the row (CSS does this)
     return `
-      <div class="funnel-row" style="--roww:${finalWidth}%;">
+      <div class="funnel-row" style="width:${widthPct}%; margin-left:auto; margin-right:auto;">
         <div class="flex items-center">
           <span class="funnel-icon"><i class="fa-solid ${s.icon}"></i></span>
           <span>${s.label}</span>
         </div>
 
         <div class="flex items-center gap-2">
-          <span class="funnel-stat">${num0(s.value)}</span>
-          ${rateChip}
+          <span class="funnel-stat">${num0(v)}</span>
+          ${rateHTML}
         </div>
       </div>
     `;
@@ -325,7 +312,6 @@ steps.forEach((s, idx) => {
 
   targetEl.innerHTML = line + rows;
 }
-
 
 /* =========================
    BENCHMARKS + FOCUS
@@ -656,6 +642,7 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEvents();
   fetchCSV();
 });
+
 
 
 
