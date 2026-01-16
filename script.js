@@ -274,10 +274,16 @@ function renderFunnel(targetEl, stats, isMobile = false) {
   const rows = steps.map((s) => {
     // funnel width: impressions widest, deals narrowest
     // clamp so it still looks good even if values are tiny
-    const ratio = Math.max(0.28, Math.min(1, (Number(s.value || 0) / maxVal)));
-    const widthPct = 92 * ratio;          // max 92% (nice margins)
-    const minPct = 42;                    // minimum visible width
-    const finalWidth = Math.max(minPct, widthPct);
+    const raw = Math.max(0, Math.min(1, (Number(s.value || 0) / maxVal)));
+
+// make taper more dramatic (power curve)
+// higher exponent = more narrowing
+const ratio = Math.pow(raw, 0.55);  // try 0.45 (more dramatic) or 0.65 (less)
+
+// width range
+const maxPct = 95;   // top width
+const minPct = 22;   // bottom minimum width (make smaller if you want)
+const finalWidth = minPct + (maxPct - minPct) * ratio;
 
     const rateChip = (s.rate === null)
       ? ""
@@ -633,4 +639,5 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEvents();
   fetchCSV();
 });
+
 
