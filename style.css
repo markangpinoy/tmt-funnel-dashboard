@@ -172,3 +172,39 @@ body { background-color: #f0fdf4; }
   .funnel-row { height: 40px; font-size: 0.78rem; }
   .funnel-connector { right: -62px; font-size: 0.68rem; }
 }
+/* --- Funnel: make widths dynamic & mobile rate chip visible --- */
+
+/* Allow funnel rows to size down nicely */
+.funnel-row {
+  max-width: 760px;
+  width: var(--roww, min(760px, 95%));
+}
+
+/* On desktop, keep the outside connector look */
+@media (min-width: 769px) {
+  .funnel-connector {
+    position: absolute;
+    right: -68px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+
+/* On mobile: move the rate chip INSIDE the row so it won't get clipped */
+@media (max-width: 768px) {
+  .funnel-container { overflow: visible; } /* important: avoid clipping */
+  .funnel-row { width: var(--roww, 95%); }
+
+  .funnel-connector {
+    position: static;
+    transform: none;
+    margin-left: 8px;
+    right: auto;
+    top: auto;
+    font-size: 0.68rem;
+    padding: 2px 6px;
+  }
+
+  .funnel-connector::before { display: none; }
+}
+
