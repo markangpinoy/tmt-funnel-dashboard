@@ -176,8 +176,8 @@ body { background-color: #f0fdf4; }
 
 /* Allow funnel rows to size down nicely */
 .funnel-row {
-  max-width: 760px;
-  width: var(--roww, min(760px, 95%));
+  width: auto;          /* allow JS width % to apply */
+  max-width: 100%;
 }
 
 /* On desktop, keep the outside connector look */
@@ -207,4 +207,5 @@ body { background-color: #f0fdf4; }
 
   .funnel-connector::before { display: none; }
 }
+
 
