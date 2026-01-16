@@ -207,5 +207,19 @@ body { background-color: #f0fdf4; }
 
   .funnel-connector::before { display: none; }
 }
+/* Mobile-friendly rate pill (used only on mobile in renderFunnel) */
+.funnel-rate-pill {
+  font-size: 0.7rem;
+  color: #15803d;
+  background-color: white;
+  border: 1px solid #bbf7d0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
 
 
