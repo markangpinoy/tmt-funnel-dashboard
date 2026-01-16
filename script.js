@@ -254,40 +254,55 @@ function kpiBigCPA(value, status) {
 /* =========================
    FUNNEL (Image 2 style)
 ========================= */
-function renderFunnel(targetEl, stats) {
+function renderFunnel(targetEl, stats, isMobile = false) {
   if (!targetEl) return;
 
   const steps = [
-    { label: "Impressions", icon: "fa-eye", value: stats.impressions, rate: null },
-    { label: "Clicks", icon: "fa-mouse-pointer", value: stats.clicks, rate: stats.ctr },
-    { label: "Leads", icon: "fa-user-plus", value: stats.leads, rate: stats.leadConv },
-    { label: "Booked", icon: "fa-phone", value: stats.booked, rate: stats.bookRate },
-    { label: "Show-Ups", icon: "fa-video", value: stats.showUps, rate: stats.showRate },
-    { label: "Qualified Calls", icon: "fa-user-check", value: stats.qualifiedCalls, rate: stats.qualRate },
-    { label: "Deals Closed", icon: "fa-handshake", value: stats.dealsClosed, rate: stats.closeRate },
+    { key: "impressions", label: "Impressions", icon: "fa-eye", value: stats.impressions, rate: null },
+    { key: "clicks",      label: "Clicks",      icon: "fa-mouse-pointer", value: stats.clicks, rate: stats.ctr },
+    { key: "leads",       label: "Leads",       icon: "fa-user-plus", value: stats.leads, rate: stats.leadConv },
+    { key: "booked",      label: "Booked",      icon: "fa-phone", value: stats.booked, rate: stats.bookRate },
+    { key: "showUps",     label: "Show-Ups",    icon: "fa-video", value: stats.showUps, rate: stats.showRate },
+    { key: "qualifiedCalls", label: "Qualified Calls", icon: "fa-user-check", value: stats.qualifiedCalls, rate: stats.qualRate },
+    { key: "dealsClosed", label: "Deals Closed", icon: "fa-handshake", value: stats.dealsClosed, rate: stats.closeRate },
   ];
 
+  const maxVal = Math.max(...steps.map(s => Number(s.value || 0)), 1);
+
   const line = `<div class="funnel-flow-line"></div>`;
+
   const rows = steps.map((s) => {
-    const rateBadge = (s.rate === null) ? "" : `
-      <div class="funnel-connector">
-        <i class="fa-solid fa-arrow-trend-up"></i> ${pct1(s.rate)}
-      </div>
-    `;
+    // funnel width: impressions widest, deals narrowest
+    // clamp so it still looks good even if values are tiny
+    const ratio = Math.max(0.28, Math.min(1, (Number(s.value || 0) / maxVal)));
+    const widthPct = 92 * ratio;          // max 92% (nice margins)
+    const minPct = 42;                    // minimum visible width
+    const finalWidth = Math.max(minPct, widthPct);
+
+    const rateChip = (s.rate === null)
+      ? ""
+      : `<span class="funnel-connector"><i class="fa-solid fa-arrow-trend-up"></i> ${pct1(s.rate)}</span>`;
+
+    // Desktop: keep the chip floating outside (your existing style)
+    // Mobile: chip sits inside the row (CSS does this)
     return `
-      <div class="funnel-row">
+      <div class="funnel-row" style="--roww:${finalWidth}%;">
         <div class="flex items-center">
           <span class="funnel-icon"><i class="fa-solid ${s.icon}"></i></span>
           <span>${s.label}</span>
         </div>
-        <span class="funnel-stat">${num0(s.value)}</span>
-        ${rateBadge}
+
+        <div class="flex items-center gap-2">
+          <span class="funnel-stat">${num0(s.value)}</span>
+          ${rateChip}
+        </div>
       </div>
     `;
   }).join("");
 
   targetEl.innerHTML = line + rows;
 }
+
 
 /* =========================
    BENCHMARKS + FOCUS
@@ -562,8 +577,8 @@ function renderAll() {
   renderKPIs(stats);
 
   // Funnel
-  renderFunnel(funnelContainer, stats);
-  renderFunnel(funnelContainerMobile, stats);
+  renderFunnel(funnelContainer, stats, false);
+renderFunnel(funnelContainerMobile, stats, true);
 
   // Benchmarks + focus
   renderBenchmarks(stats);
@@ -618,3 +633,4 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEvents();
   fetchCSV();
 });
+
