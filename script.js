@@ -278,12 +278,29 @@ function renderFunnel(targetEl, stats, isMobile = false) {
 
 // make taper more dramatic (power curve)
 // higher exponent = more narrowing
-const ratio = Math.pow(raw, 0.55);  // try 0.45 (more dramatic) or 0.65 (less)
+// max value among the funnel steps
+const maxVal = Math.max(...steps.map(s => Number(s.value || 0)), 1);
 
-// width range
-const maxPct = 95;   // top width
-const minPct = 22;   // bottom minimum width (make smaller if you want)
-const finalWidth = minPct + (maxPct - minPct) * ratio;
+steps.forEach((s, idx) => {
+  const v = Number(s.value || 0);
+
+  // stronger funnel taper
+  const raw = Math.max(0, Math.min(1, v / maxVal));
+  const ratio = Math.pow(raw, 0.55);     // lower = more taper (try 0.45 if you want more)
+  const maxPct = 96;                     // top width
+  const minPct = 34;                     // bottom width
+  const widthPct = minPct + (maxPct - minPct) * ratio;
+
+  const row = document.createElement("div");
+  row.className = "funnel-row";
+
+  // IMPORTANT: this creates the stepped/centered funnel look
+  row.style.width = `${widthPct}%`;
+  row.style.marginLeft = "auto";
+  row.style.marginRight = "auto";
+
+  // ... keep the rest of your row HTML building here ...
+});
 
     const rateChip = (s.rate === null)
       ? ""
@@ -639,5 +656,6 @@ document.addEventListener("DOMContentLoaded", () => {
   wireEvents();
   fetchCSV();
 });
+
 
 
